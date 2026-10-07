@@ -1,0 +1,36 @@
+.env
+
+# LLM / 埋め込みのキャッシュ（API レスポンスの生データ。再現は fetch + run でやる）
+.cache/
+
+# AIFdb から取得したコーパス本文。
+# QT30 の再配布条件が明示されていないため、このリポジトリには含めない。
+# `make aif-fetch` で各自が取得する（§README「データの扱い」）。
+data/aifdb/
+
+# 実験の生出力。生成グラフと evidence にはコーパス本文が含まれるので公開しない。
+# 集計値（本文を含まない）は data/metrics/ に置く。
+out/
+
+# 実験の生出力を out/ 以外に置いた場合（例: aif-test-*）も同じ理由で公開しない。
+aif-test-*/
+
+# 論文の図 2（生成グラフの例）は QT30 の発話をそのまま含むので公開しない。
+# scripts/make_paper_figs.py が out/ の生出力から各自の手元で生成する。
+docs/figures/*
+
+# ビルド生成物。と原稿もここで除外される。
+*.pptx
+*.pdf
+*.docx
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / エディタ
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.sh
