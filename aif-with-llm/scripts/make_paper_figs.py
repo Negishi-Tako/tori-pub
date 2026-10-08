@@ -10,6 +10,10 @@ Figure 2 (an example of a generated structure) reads one generated graph from th
 re-run with the corrected locution order (out/rerun-n124-v3/graphs/, not in the repository because it
 contains corpus text). The marks "matches gold" / "gold: MA" come from the evaluation of nodeset 17957
 (evidence lists "correct" and "mistyped" in results.jsonl); only those marks are written here.
+
+Both figures must stay readable when printed in black and white, so nothing is told apart by hue:
+LLM steps are shaded grey with a heavy border, fixed rules use a dashed border, and a relation that
+disagrees with the gold annotation is drawn dashed.
 """
 
 import argparse
@@ -28,9 +32,10 @@ OUT = os.path.join(ROOT, "docs", "figures")
 WIDTH = 6.0  # inches, as placed in the paper
 FS = 8  # pt, per the paper guidelines
 
-# Reference palette (light), validated with the dataviz validator.
-BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
-INK, INK2 = "#0b0b0b", "#52514e"
+# Greyscale only, so the figures print the same in black and white.
+INK, INK2 = "#000000", "#404040"
+SHADE = "#e3e3e3"  # fill of the steps decided by the LLM
+HEAVY, LIGHT = 1.3, 0.8  # border widths: LLM step / everything else
 
 TEXT = {
     "en": {
@@ -65,14 +70,14 @@ TEXT = {
 T = TEXT["en"]
 
 
-def rbox(ax, x, y, w, h, edge, lw=0.8, fill="white"):
+def rbox(ax, x, y, w, h, edge=INK2, lw=LIGHT, fill="white", ls="-"):
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.25,rounding_size=0.8",
-                                linewidth=lw, edgecolor=edge, facecolor=fill))
+                                linewidth=lw, edgecolor=edge, facecolor=fill, linestyle=ls))
 
 
-def arrow(ax, p0, p1, color=INK2, lw=0.8):
+def arrow(ax, p0, p1, color=INK2, lw=0.8, ls="-"):
     ax.add_patch(FancyArrowPatch(p0, p1, arrowstyle="-|>", mutation_scale=7, linewidth=lw, color=color,
-                                 shrinkA=0, shrinkB=0))
+                                 linestyle=ls, shrinkA=0, shrinkB=0))
 
 
 def fig_pipeline():
@@ -83,18 +88,21 @@ def fig_pipeline():
     ax.axis("off")
     y, h, w, gap = 10.9, 13.2, 17.3, 2.9
     xs = [0.4 + i * (w + gap) for i in range(5)]
-    cards = [(*T["transcript"], INK2), (*T["stage1"], BLUE), (*T["stage2"], BLUE),
-             (*T["stage3"], BLUE), (*T["graph"], INK2)]
-    for x, (title, body, edge) in zip(xs, cards):
-        rbox(ax, x, y, w, h, edge)
+    cards = [(*T["transcript"], False), (*T["stage1"], True), (*T["stage2"], True),
+             (*T["stage3"], True), (*T["graph"], False)]
+    for x, (title, body, llm) in zip(xs, cards):
+        if llm:
+            rbox(ax, x, y, w, h, INK, lw=HEAVY, fill=SHADE)
+        else:
+            rbox(ax, x, y, w, h)
         ax.text(x + w / 2, y + h - 1.4, title, ha="center", va="top", fontsize=FS, weight="bold", color=INK)
-        ax.text(x + w / 2, y + h - 4.9, body, ha="center", va="top", fontsize=FS, color=INK2, linespacing=1.15)
+        ax.text(x + w / 2, y + h - 4.9, body, ha="center", va="top", fontsize=FS, color=INK, linespacing=1.15)
     for a, b in zip(xs, xs[1:]):
         arrow(ax, (a + w + 0.35, y + h / 2), (b - 0.35, y + h / 2))
     bw = xs[3] + w - xs[0]
-    rbox(ax, xs[0], 0.6, bw, 8.6, ORANGE)
+    rbox(ax, xs[0], 0.6, bw, 8.6, INK, ls=(0, (4, 2)))
     ax.text(xs[0] + bw / 2, 8.8, T["rules"][0], ha="center", va="top", fontsize=FS, weight="bold", color=INK)
-    ax.text(xs[0] + bw / 2, 5.8, T["rules"][1], ha="center", va="top", fontsize=FS, color=INK2, linespacing=1.2)
+    ax.text(xs[0] + bw / 2, 5.8, T["rules"][1], ha="center", va="top", fontsize=FS, color=INK, linespacing=1.2)
     cx = xs[4] + w / 2
     ax.plot([xs[0] + bw + 0.35, cx], [4.9, 4.9], color=INK2, linewidth=0.8)
     arrow(ax, (cx, 4.55), (cx, y - 0.35))
@@ -152,32 +160,29 @@ def fig_example():
     for x, label in ((xl, T["col_l"]), (xya, T["col_ya"]), (xi, T["col_i"]), (xs - 3.2, T["col_s"])):
         ax.text(x, total - 0.3, label, ha="left", va="top", fontsize=FS, weight="bold", color=INK)
     for k, (y, bh) in enumerate(zip(ys, heights)):
-        rbox(ax, xl, y - bh / 2, wl, bh, INK2)
+        rbox(ax, xl, y - bh / 2, wl, bh)
         ax.text(xl + 0.8, y, wl_txt[k], ha="left", va="center", fontsize=FS, color=INK, linespacing=1.05)
-        rbox(ax, xya, y - 1.9, wya, 3.8, BLUE, fill="#eef4fc")
+        rbox(ax, xya, y - 1.9, wya, 3.8, INK, lw=HEAVY, fill=SHADE)
         ax.text(xya + wya / 2, y, forces[k], ha="center", va="center", fontsize=FS, color=INK)
-        rbox(ax, xi, y - bh / 2, wi, bh, BLUE)
+        rbox(ax, xi, y - bh / 2, wi, bh, INK, lw=HEAVY, fill=SHADE)
         ax.text(xi + 0.8, y, wi_txt[k], ha="left", va="center", fontsize=FS, color=INK, linespacing=1.05)
         arrow(ax, (xl + wl + 0.35, y), (xya - 0.35, y))
         arrow(ax, (xya + wya + 0.35, y), (xi - 0.35, y))
-        if k + 1 < n:  # TA between consecutive locutions
+        if k + 1 < n:  # TA between consecutive locutions: a short arrow, labelled beside it
             y_top, y_bot = y - bh / 2, ys[k + 1] + heights[k + 1] / 2
             ym, tx = (y_top + y_bot) / 2, xl + 27.0
-            ax.add_patch(FancyBboxPatch((tx - 2.6, ym - 1.05), 5.2, 2.1, boxstyle="round,pad=0.15,rounding_size=0.5",
-                                        linewidth=0.7, edgecolor=INK2, facecolor="white"))
-            ax.text(tx, ym, "TA", ha="center", va="center", fontsize=FS, color=INK2)
-            ax.plot([tx, tx], [y_top - 0.25, ym + 1.25], color=INK2, linewidth=0.7)
-            arrow(ax, (tx, ym - 1.25), (tx, y_bot + 0.25))
+            arrow(ax, (tx, y_top - 0.3), (tx, y_bot + 0.35))
+            ax.text(tx + 1.0, ym, "TA", ha="left", va="center", fontsize=FS, color=INK)
     for typ, s, d, _ in rels:
         v = verdict.get((typ, s, d), "")
-        color = ORANGE if v == "bad" else AQUA
+        ls = (0, (3, 2)) if v == "bad" else "-"  # disagreement with the gold annotation is dashed
         ym = (ys[s] + ys[d]) / 2
-        ax.add_patch(plt.Circle((xs, ym), 2.1, facecolor="white", edgecolor=color, linewidth=1.1))
+        ax.add_patch(plt.Circle((xs, ym), 2.1, facecolor="white", edgecolor=INK, linewidth=1.1, linestyle=ls))
         ax.text(xs, ym, typ, ha="center", va="center", fontsize=FS, weight="bold", color=INK)
-        ax.plot([xi + wi + 0.4, xs - 2.1], [ys[s], ym], color=color, linewidth=0.9)
-        arrow(ax, (xs - 2.1, ym), (xi + wi + 0.4, ys[d]), color=color, lw=0.9)
+        ax.plot([xi + wi + 0.4, xs - 2.1], [ys[s], ym], color=INK, linewidth=0.9, linestyle=ls)
+        arrow(ax, (xs - 2.1, ym), (xi + wi + 0.4, ys[d]), color=INK, lw=0.9, ls=ls)
         ax.text(xs + 2.8, ym, T["ok"] if v == "ok" else T["bad"], ha="left", va="center", fontsize=FS,
-                color=INK2 if v == "ok" else ORANGE, linespacing=1.0)
+                color=INK, style="normal" if v == "ok" else "italic", linespacing=1.0)
     fig.savefig(os.path.join(OUT, f"paper_fig2_example{T['suffix']}.png"), dpi=300, facecolor="white")
     plt.close(fig)
 
