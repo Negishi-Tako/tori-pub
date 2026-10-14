@@ -109,6 +109,7 @@ make aif-report ARGS="-out out/v3"
 
 ```sh
 make aif-goldcheck   # count AIF metamodel violations in the gold graphs
+make paper-stats     # reproduce the paper's tests (five comparisons, Holm) from data/metrics/*.csv
 make check           # fmt → vet → test
 make figures         # regenerate the report figures from out/aif-n124-*/ (Python + matplotlib)
 ```
@@ -214,6 +215,7 @@ make aif-report ARGS="-out out/v3"
 
 ```sh
 make aif-goldcheck   # ゴールド側の AIF メタモデル違反を数える
+make paper-stats     # 論文の検定（5 比較・Holm 補正）を data/metrics/*.csv から再現する
 make check           # fmt → vet → test
 make figures         # レポートの図を out/aif-n124-*/ から再生成（Python + matplotlib）
 ```

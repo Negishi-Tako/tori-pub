@@ -385,7 +385,8 @@ func writeStats(path string, results []Result) error {
 	sb.WriteString("# 条件間の対応のある比較\n\n")
 	sb.WriteString("同じノードセット同士で条件を突き合わせる。差の信頼区間は対応ありブートストラップ（10,000 反復・seed 固定）、\n")
 	sb.WriteString("p 値は Wilcoxon 符号順位検定（両側）、効果量は Cliff's delta。\n")
-	sb.WriteString("多重比較補正（Holm）は 1 つの条件対について全指標をまたいで掛けている。\n\n")
+	sb.WriteString("多重比較補正（Holm）は 1 つの条件対について全指標をまたいで掛けている（探索用）。\n")
+	sb.WriteString("論文の検定（5 比較の族に Holm）はこの表ではなく `aif-eval -paperstats` で計算する。\n\n")
 	for i := range conds {
 		for j := range conds {
 			if i == j {

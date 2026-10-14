@@ -7,6 +7,7 @@
 //	aif-eval -run -split test -sample 124 -prompt-set v3
 //	aif-eval -report                                 # 集計 + 検定 + 証拠の書き出し
 //	aif-eval -goldcheck                              # ゴールド自体の AIF メタモデル違反を数える
+//	aif-eval -paperstats                             # 論文の検定を data/metrics/ から再現する
 package main
 
 import (
@@ -46,6 +47,7 @@ func run() error {
 		doRun       = flag.Bool("run", false, "アノテーションと比較を実行する")
 		doReport    = flag.Bool("report", false, "結果を集計してレポート素材を書き出す")
 		doGoldcheck = flag.Bool("goldcheck", false, "ゴールド自体の AIF メタモデル違反を数える")
+		doPaper     = flag.Bool("paperstats", false, "論文の検定（5 比較・Holm）を "+paperMetricsDir+"/ の集計値から計算する")
 		corpus      = flag.String("corpus", "qt30", "AIFdb のコーパス shortname")
 		subcorpora  = flag.Int("subcorpora", 3, "取得するサブコーパス数（先頭から）")
 		dataDir     = flag.String("data", "data/aifdb", "取得したノードセットの置き場")
@@ -63,9 +65,9 @@ func run() error {
 	)
 	flag.Parse()
 
-	if !*doFetch && !*doRun && !*doReport && !*doGoldcheck {
+	if !*doFetch && !*doRun && !*doReport && !*doGoldcheck && !*doPaper {
 		flag.Usage()
-		return errors.New("-fetch / -run / -report / -goldcheck のいずれかを指定してください")
+		return errors.New("-fetch / -run / -report / -goldcheck / -paperstats のいずれかを指定してください")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -109,6 +111,11 @@ func run() error {
 	}
 	if *doReport {
 		if err := report(*outDir); err != nil {
+			return err
+		}
+	}
+	if *doPaper {
+		if err := paperStats(paperMetricsDir, os.Stdout); err != nil {
 			return err
 		}
 	}

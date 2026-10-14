@@ -27,6 +27,10 @@ aif-report: ## 集計・検定・証拠を書き出す（例: ARGS="-out out/aif
 aif-goldcheck: ## ゴールド自体の AIF メタモデル適合を数える
 	go run ./cmd/aif-eval -goldcheck $(ARGS)
 
+.PHONY: paper-stats
+paper-stats: ## 論文の検定（5 比較・Holm 補正）を data/metrics/ の集計値から再現する
+	go run ./cmd/aif-eval -paperstats
+
 .PHONY: figures
 figures: ## レポートの図を再生成（out/aif-n124-*/ の生出力が必要。Python + matplotlib）
 	python3 scripts/make_report_figs.py
