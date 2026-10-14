@@ -13,18 +13,18 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-// OpenAIConfig は OpenAI クライアントの設定。
+// OpenAIConfig configures the OpenAI client.
 type OpenAIConfig struct {
 	APIKey  string
-	BaseURL string // 空なら公式エンドポイント。互換 API を使うときだけ設定する
-	// MaxRetries は SDK 内蔵リトライの回数（Retry-After を尊重する）。
+	BaseURL string // empty means the official endpoint; set only when using a compatible API
+	// MaxRetries is the number of SDK built-in retries (Retry-After is honored).
 	MaxRetries int
 	Timeout    time.Duration
-	// Pricing はコスト推定表。nil なら DefaultPricing を使う。
+	// Pricing is the cost estimation table. nil means DefaultPricing.
 	Pricing *PriceTable
 }
 
-// OpenAIClient は Client の OpenAI 実装。
+// OpenAIClient is the OpenAI implementation of Client.
 type OpenAIClient struct {
 	api     openai.Client
 	pricing *PriceTable
@@ -32,7 +32,7 @@ type OpenAIClient struct {
 
 var _ Client = (*OpenAIClient)(nil)
 
-// NewOpenAI は OpenAI クライアントを作る。
+// NewOpenAI creates an OpenAI client.
 func NewOpenAI(cfg OpenAIConfig) (*OpenAIClient, error) {
 	api, err := cfg.newAPI()
 	if err != nil {
@@ -45,8 +45,8 @@ func NewOpenAI(cfg OpenAIConfig) (*OpenAIClient, error) {
 	return &OpenAIClient{api: api, pricing: pricing}, nil
 }
 
-// newAPI は SDK のクライアントを作る。APIKey が空ならエラー
-// （環境変数の暗黙読み込みに頼ると、キー未設定に気づくのが実行の後半になる）。
+// newAPI creates the SDK client. An empty APIKey is an error
+// (relying on implicit environment variable loading means a missing key is noticed only late in a run).
 func (cfg OpenAIConfig) newAPI() (openai.Client, error) {
 	if cfg.APIKey == "" {
 		return openai.Client{}, errors.New("llm: OPENAI_API_KEY is not set")
@@ -92,7 +92,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (*Response, er
 		params.MaxCompletionTokens = openai.Int(req.MaxTokens)
 	}
 	if req.Schema != nil {
-		// Schema.JSON は any として渡す必要がある（SDK が再度 marshal する）。
+		// Schema.JSON must be passed as any (the SDK marshals it again).
 		var schemaObj any
 		if err := json.Unmarshal(req.Schema.JSON, &schemaObj); err != nil {
 			return nil, fmt.Errorf("llm: invalid json schema %q: %w", req.Schema.Name, err)
@@ -140,23 +140,23 @@ func (c *OpenAIClient) Complete(ctx context.Context, req Request) (*Response, er
 	}, nil
 }
 
-// OpenAIEmbedder は Embedder の OpenAI Embeddings API 実装。
+// OpenAIEmbedder is the OpenAI Embeddings API implementation of Embedder.
 type OpenAIEmbedder struct {
 	api   openai.Client
 	model string
 	dim   int
-	// batchSize は 1 リクエストに詰めるテキスト数。API 上限は 2048 入力。
+	// batchSize is the number of texts packed into one request. The API limit is 2048 inputs.
 	batchSize int
 }
 
 var _ Embedder = (*OpenAIEmbedder)(nil)
 
-// OpenAIEmbedderConfig は埋め込みクライアントの設定。
+// OpenAIEmbedderConfig configures the embedding client.
 type OpenAIEmbedderConfig struct {
 	OpenAIConfig
-	// Model は "text-embedding-3-small" 等。
+	// Model is e.g. "text-embedding-3-small".
 	Model string
-	// Dim は 0 なら既定次元。text-embedding-3-* は短縮次元を指定できる。
+	// Dim of 0 means the default dimension. text-embedding-3-* accepts shortened dimensions.
 	Dim       int
 	BatchSize int
 }
@@ -187,11 +187,11 @@ func NewOpenAIEmbedder(cfg OpenAIEmbedderConfig) (*OpenAIEmbedder, error) {
 func (e *OpenAIEmbedder) Model() string { return e.model }
 func (e *OpenAIEmbedder) Dim() int      { return e.dim }
 
-// maxEmbedRunes は埋め込み 1 件あたりの文字数の安全上限。
+// maxEmbedRunes is a safe upper bound on characters per embedding.
 //
-// text-embedding-3-small の上限は 8192 トークンだが、こちらにトークナイザは無い。
-// 1 文字あたり最大 2 トークン程度まで振れることを見込み、8192 / 2 に余裕を持たせた値にしてある。
-// 先頭を残して切り詰める簡易対策で、厳密なトークン数管理ではない（AIF の命題・発話は十分短い）。
+// text-embedding-3-small's limit is 8192 tokens, but we have no tokenizer here.
+// Allowing for up to about 2 tokens per character, the value is 8192 / 2 with some margin.
+// It is a simple safeguard that truncates keeping the head, not exact token accounting (AIF propositions and utterances are short enough).
 const maxEmbedRunes = 3500
 
 func truncateForEmbedding(s string) string {
@@ -228,7 +228,7 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 		if len(resp.Data) != len(batch) {
 			return nil, fmt.Errorf("llm: embedding count mismatch: got %d, want %d", len(resp.Data), len(batch))
 		}
-		// Data の順序は index フィールドに従う（保証されているが念のため並べ替える）。
+		// Data order follows the index field (guaranteed, but sorted just in case).
 		vecs := make([][]float32, len(batch))
 		for _, d := range resp.Data {
 			if d.Index < 0 || int(d.Index) >= len(batch) {

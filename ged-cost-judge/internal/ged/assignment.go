@@ -5,18 +5,18 @@ import (
 	"math"
 )
 
-// bipartiteMatch は Riesen & Bunke (2009) の二部グラフ近似で、ノードの最適割当を求める。
+// bipartiteMatch finds an optimal node assignment with the bipartite approximation of Riesen & Bunke (2009).
 //
-// (n+m)×(n+m) のコスト行列を組む:
+// It builds an (n+m)×(n+m) cost matrix:
 //
-//	左上 n×m  置換コスト sub[i][j]
-//	右上 n×n  対角に削除コスト del[i]、それ以外は禁止
-//	左下 m×m  対角に挿入コスト ins[j]、それ以外は禁止
-//	右下 m×n  ダミー同士（0）
+//	top-left     n×m  substitution costs sub[i][j]
+//	top-right    n×n  deletion costs del[i] on the diagonal, forbidden elsewhere
+//	bottom-left  m×m  insertion costs ins[j] on the diagonal, forbidden elsewhere
+//	bottom-right m×n  dummy to dummy (0)
 //
-// 戻り値は置換として割り当てられた (i → j) の対応。削除・挿入されたノードは含まない。
-// 以前は同じ行列を Python（scipy）のサービスで解いていた。解法を scipy と同じにしてあるので
-// （linearSumAssignment を参照）、同点の解き方まで含めて同じ割当が返る。
+// It returns the (i → j) pairs assigned as substitutions. Deleted and inserted nodes are not included.
+// The same matrix used to be solved by a Python (scipy) service. The solver matches scipy's
+// (see linearSumAssignment), so the same assignment is returned, including how ties are broken.
 func bipartiteMatch(sub [][]float64, del, ins []float64) (map[int]int, error) {
 	n, m := len(del), len(ins)
 	if n == 0 && m == 0 {
@@ -55,12 +55,12 @@ func bipartiteMatch(sub [][]float64, del, ins []float64) (map[int]int, error) {
 	return out, nil
 }
 
-// linearSumAssignment は正方コスト行列の最小コスト完全割当を解き、行 i に割り当てた列を返す。
+// linearSumAssignment solves the minimum-cost perfect assignment of a square cost matrix and returns the column assigned to each row i.
 //
-// scipy.optimize.linear_sum_assignment（rectangular_lsap.cpp）の移植で、
-// Crouse (2016) の最短増加路法。同点時の選び方（残り列を逆順に並べる・未割当の列を
-// 優先する）まで scipy と同じにしてある。浮動小数の演算も同じ順序で行うので、
-// scipy と同じ行列からは同じ割当が返る。
+// It is a port of scipy.optimize.linear_sum_assignment (rectangular_lsap.cpp), the
+// shortest augmenting path method of Crouse (2016). Tie-breaking (ordering remaining columns in reverse,
+// preferring unassigned columns) matches scipy too. Floating-point operations are performed in the same order,
+// so the same matrix yields the same assignment as scipy.
 func linearSumAssignment(cost [][]float64) ([]int, error) {
 	n := len(cost)
 	for _, row := range cost {
@@ -87,7 +87,7 @@ func linearSumAssignment(cost [][]float64) ([]int, error) {
 	}
 
 	for cur := range n {
-		// ---- 最短増加路を探す ----
+		// ---- Find the shortest augmenting path ----
 		minVal := 0.0
 		for it := range n {
 			remaining[it] = n - it - 1
@@ -129,7 +129,7 @@ func linearSumAssignment(cost [][]float64) ([]int, error) {
 			remaining[index] = remaining[numRemaining]
 		}
 
-		// ---- 双対変数を更新する ----
+		// ---- Update the dual variables ----
 		u[cur] += minVal
 		for i := range n {
 			if sr[i] && i != cur {
@@ -142,7 +142,7 @@ func linearSumAssignment(cost [][]float64) ([]int, error) {
 			}
 		}
 
-		// ---- 解を増加路に沿って更新する ----
+		// ---- Augment the solution along the path ----
 		for j := sink; ; {
 			i := path[j]
 			row4col[j] = i

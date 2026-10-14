@@ -7,9 +7,9 @@ import (
 	"math"
 )
 
-// テスト用の実装。実 API を叩かずに配線と集計を確かめるために使う。
+// Test implementations. Used to check wiring and aggregation without calling the real API.
 
-// FuncClient は関数 1 つで応答を決める Client。
+// FuncClient is a Client whose response is decided by a single function.
 type FuncClient struct {
 	Fn func(ctx context.Context, req Request) (*Response, error)
 }
@@ -20,8 +20,8 @@ func (c *FuncClient) Complete(ctx context.Context, req Request) (*Response, erro
 	return c.Fn(ctx, req)
 }
 
-// HashEmbedder はテキストのハッシュから安定したベクトルを作る決定的な埋め込み。
-// 意味的な性質は無い（同じ文は cos 1、違う文はほぼ無相関）。
+// HashEmbedder is a deterministic embedding that builds stable vectors from a hash of the text.
+// It has no semantic properties (identical sentences have cos 1; different ones are nearly uncorrelated).
 type HashEmbedder struct {
 	Name string
 	D    int

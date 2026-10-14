@@ -1,9 +1,9 @@
-// Package stats は条件間比較の統計処理。
+// Package stats provides statistics for comparisons between conditions.
 //
-// 方針:
-//   - p 値だけで主張しない。効果量と信頼区間を必ず併記する
-//   - 条件間比較は対応のある検定（同じノードセット同士を組にする）
-//   - 多重比較補正（Holm）を掛ける
+// Principles:
+//   - Never make claims from p-values alone. Always report effect sizes and confidence intervals alongside
+//   - Comparisons between conditions use paired tests (pairing the same nodesets)
+//   - Apply multiple-comparison correction (Holm)
 package stats
 
 import (
@@ -13,7 +13,7 @@ import (
 	"sort"
 )
 
-// Summary は 1 系列の要約統計。
+// Summary is the summary statistics of one series.
 type Summary struct {
 	N    int     `json:"n"`
 	Mean float64 `json:"mean"`
@@ -46,25 +46,25 @@ func Describe(xs []float64) Summary {
 	return s
 }
 
-// PairedComparison は対応のある 2 条件の比較結果。
+// PairedComparison is the result of comparing two paired conditions.
 type PairedComparison struct {
 	N int `json:"n"`
-	// MeanDiff は a - b の平均。
+	// MeanDiff is the mean of a - b.
 	MeanDiff float64 `json:"mean_diff"`
-	// CILow / CIHigh は bootstrap による差の信頼区間。
+	// CILow / CIHigh are the bootstrap confidence interval of the difference.
 	CILow  float64 `json:"ci_low"`
 	CIHigh float64 `json:"ci_high"`
-	// PValue は Wilcoxon 符号順位検定（両側・正規近似）。
+	// PValue is from the Wilcoxon signed-rank test (two-sided, normal approximation).
 	PValue float64 `json:"p_value"`
-	// CliffsDelta は効果量（-1〜1）。
+	// CliffsDelta is the effect size (-1 to 1).
 	CliffsDelta float64 `json:"cliffs_delta"`
-	// Magnitude は Cliff's delta の慣例的な解釈。
+	// Magnitude is the conventional interpretation of Cliff's delta.
 	Magnitude string `json:"magnitude"`
 }
 
-// ComparePaired は対応のある 2 系列を比べる。
+// ComparePaired compares two paired series.
 //
-// a と b は同じ順序で対応していること（同じノードセット）。
+// a and b must correspond in the same order (the same nodesets).
 func ComparePaired(a, b []float64, bootstrapIters int, seed uint64) (PairedComparison, error) {
 	if len(a) != len(b) {
 		return PairedComparison{}, fmt.Errorf("stats: paired series must have the same length (%d vs %d)", len(a), len(b))
@@ -85,10 +85,10 @@ func ComparePaired(a, b []float64, bootstrapIters int, seed uint64) (PairedCompa
 	return out, nil
 }
 
-// BootstrapCI は差の平均の信頼区間をブートストラップで求める。
+// BootstrapCI computes a confidence interval for the mean difference by bootstrapping.
 //
-// seed を渡すのは、同じデータから同じ区間が出ることを保証するため
-// （報告した数値を後から再現できないと困る）。
+// seed is passed to guarantee that the same data yields the same interval
+// (reported numbers must be reproducible later).
 func BootstrapCI(diffs []float64, iters int, alpha float64, seed uint64) (low, high float64) {
 	if len(diffs) == 0 {
 		return 0, 0
@@ -120,10 +120,10 @@ func BootstrapCI(diffs []float64, iters int, alpha float64, seed uint64) (low, h
 	return means[lowIdx], means[highIdx]
 }
 
-// WilcoxonSignedRank は符号順位検定の両側 p 値（正規近似・連続性補正あり）。
+// WilcoxonSignedRank returns the two-sided p-value of the signed-rank test (normal approximation with continuity correction).
 //
-// 正規近似なので、有効な対（差が 0 でないもの）が少ないと精度が落ちる。
-// 対が 10 未満のときは参考値として扱うこと（本実験は n=20〜124）。
+// Because it is a normal approximation, accuracy drops when there are few effective pairs (nonzero differences).
+// Treat results with fewer than 10 pairs as indicative only (this experiment has n=20–124).
 func WilcoxonSignedRank(diffs []float64) float64 {
 	type entry struct {
 		abs  float64
@@ -132,7 +132,7 @@ func WilcoxonSignedRank(diffs []float64) float64 {
 	var entries []entry
 	for _, d := range diffs {
 		if d == 0 {
-			continue // 差が 0 の対は検定から外す（標準的な扱い）
+			continue // pairs with zero difference are excluded from the test (standard practice)
 		}
 		sign := 1.0
 		if d < 0 {
@@ -146,7 +146,7 @@ func WilcoxonSignedRank(diffs []float64) float64 {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].abs < entries[j].abs })
 
-	// 同順位は平均順位を割り当てる。
+	// Ties get the average rank.
 	ranks := make([]float64, n)
 	for i := 0; i < n; {
 		j := i
@@ -174,7 +174,7 @@ func WilcoxonSignedRank(diffs []float64) float64 {
 	if variance <= 0 {
 		return 1
 	}
-	z := (math.Abs(w-mean) - 0.5) / math.Sqrt(variance) // 連続性補正
+	z := (math.Abs(w-mean) - 0.5) / math.Sqrt(variance) // continuity correction
 	if z < 0 {
 		z = 0
 	}
@@ -185,10 +185,10 @@ func normalCDF(z float64) float64 {
 	return 0.5 * math.Erfc(-z/math.Sqrt2)
 }
 
-// CliffsDelta は効果量。a が b より大きい傾向をどれだけ持つか（-1〜1）。
+// CliffsDelta is an effect size: how strongly a tends to be larger than b (-1 to 1).
 //
-// 順位ベースなので分布の形を仮定しない。平均差だけでは
-// 「ばらつきの中に埋もれた差」を過大評価しかねないので併記する。
+// It is rank-based, so it assumes no distribution shape. The mean difference alone can
+// overstate "a difference buried in the variance", so this is reported alongside.
 func CliffsDelta(a, b []float64) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
@@ -207,7 +207,7 @@ func CliffsDelta(a, b []float64) float64 {
 	return float64(greater-less) / float64(len(a)*len(b))
 }
 
-// DeltaMagnitude は Cliff's delta の慣例的な区切り（Romano et al. 2006）。
+// DeltaMagnitude applies the conventional cutoffs for Cliff's delta (Romano et al. 2006).
 func DeltaMagnitude(delta float64) string {
 	d := math.Abs(delta)
 	switch {
@@ -222,10 +222,10 @@ func DeltaMagnitude(delta float64) string {
 	}
 }
 
-// HolmAdjust は Holm-Bonferroni 法で p 値を補正する。
+// HolmAdjust adjusts p-values with the Holm-Bonferroni method.
 //
-// 入力と同じ順序で補正後の値を返す。指標を増やすほど個々の閾値が厳しくなるので、
-// 「指標を増やして当たりを探す」ことへの歯止めになる。
+// Adjusted values are returned in the same order as the input. The more metrics there are, the stricter
+// each threshold becomes, which guards against "adding metrics to fish for hits".
 func HolmAdjust(pvalues []float64) []float64 {
 	n := len(pvalues)
 	out := make([]float64, n)
@@ -241,7 +241,7 @@ func HolmAdjust(pvalues []float64) []float64 {
 	prev := 0.0
 	for rank, i := range idx {
 		adj := float64(n-rank) * pvalues[i]
-		// 単調性を保つ（順位が下の p 値が上を下回らないようにする）。
+		// Preserve monotonicity (a lower-ranked p-value must not fall below a higher-ranked one).
 		adj = math.Max(adj, prev)
 		adj = math.Min(adj, 1)
 		out[i] = adj

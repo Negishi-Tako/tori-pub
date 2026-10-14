@@ -1,13 +1,13 @@
-// Command aif-eval は「LLM に素の AIF を書かせて、AIFdb のゴールドと突き合わせる」
-// 実験を回す CLI。
+// Command aif-eval is a CLI that runs the experiment "have an LLM write plain AIF and
+// compare it against the AIFdb gold".
 //
-// 手順:
+// Usage:
 //
-//	aif-eval -fetch -corpus qt30 -subcorpora 6       # ゴールドと素テキストを取得
+//	aif-eval -fetch -corpus qt30 -subcorpora 6       # fetch gold and raw text
 //	aif-eval -run -split test -sample 124 -prompt-set v3
-//	aif-eval -report                                 # 集計 + 検定 + 証拠の書き出し
-//	aif-eval -goldcheck                              # ゴールド自体の AIF メタモデル違反を数える
-//	aif-eval -paperstats                             # 論文の検定を data/metrics/ から再現する
+//	aif-eval -report                                 # write aggregates + tests + evidence
+//	aif-eval -goldcheck                              # count AIF metamodel violations in the gold itself
+//	aif-eval -paperstats                             # reproduce the paper's tests from data/metrics/
 package main
 
 import (
@@ -34,11 +34,11 @@ func main() {
 	}
 }
 
-// 条件名。必ず「LLM 無し」の基準線を 1 本置く。
+// Condition names. Always include one "no LLM" baseline.
 const (
-	condBaseline = "baseline" // LLM を使わない下限（発話 = 命題、関係なし）
-	condGoldLoc  = "gold-loc" // ゴールドの L-node を与え、YA/I/RA/CA/MA だけ LLM に任せる
-	condE2E      = "e2e"      // 素の書き起こしから全部 LLM に任せる
+	condBaseline = "baseline" // lower bound without an LLM (utterance = proposition, no relations)
+	condGoldLoc  = "gold-loc" // give the gold L-nodes and leave only YA/I/RA/CA/MA to the LLM
+	condE2E      = "e2e"      // leave everything to the LLM, starting from the raw transcript
 )
 
 func run() error {
@@ -122,7 +122,7 @@ func run() error {
 	return nil
 }
 
-// splitList はカンマ区切りの値を、前後の空白と空要素を除いて返す。
+// splitList returns comma-separated values with surrounding whitespace and empty elements removed.
 func splitList(s string) []string {
 	var out []string
 	for _, v := range strings.Split(s, ",") {
@@ -133,8 +133,8 @@ func splitList(s string) []string {
 	return out
 }
 
-// goldcheck はゴールド（正規化後）の AIF メタモデル違反を規則ごとに数える。
-// レポートに「正解データにもこれだけ逸脱がある」を書くための点検用。
+// goldcheck counts AIF metamodel violations in the (normalized) gold, per rule.
+// It is a sanity check so the report can state how much the gold data itself deviates.
 func goldcheck(dataDir string) error {
 	docs, err := loadDocs(dataDir)
 	if err != nil {

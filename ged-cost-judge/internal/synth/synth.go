@@ -1,7 +1,7 @@
-// Package synth は LLM で元の議論（グラフ + テキスト）を作り（計画 G1）、
-// 編集計画を変種のテキストに書き下し（G3）、三つ組を判定させる（J）。
+// Package synth uses an LLM to build source arguments (graph + text) (plan G1),
+// realize edit plans as variant text (G3), and judge triplets (J).
 //
-// 生成と判定は必ず別のリクエストで行い、会話の履歴を持たない（計画 §2.2）。
+// Generation and judgment always use separate requests with no conversation history (plan §2.2).
 package synth
 
 import (
@@ -21,14 +21,14 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/perturb"
 )
 
-// Prompt はプロンプトファイルの本文とハッシュ。
+// Prompt is a prompt file's body and hash.
 type Prompt struct {
 	Name string
 	Body string
 	Hash string
 }
 
-// LoadPrompt は dir/name.md を読む。
+// LoadPrompt reads dir/name.md.
 func LoadPrompt(dir, name string) (Prompt, error) {
 	b, err := os.ReadFile(filepath.Join(dir, name+".md"))
 	if err != nil {
@@ -38,21 +38,21 @@ func LoadPrompt(dir, name string) (Prompt, error) {
 	return Prompt{Name: name, Body: string(b), Hash: hex.EncodeToString(h[:6])}, nil
 }
 
-// Utterance は発話。
+// Utterance is an utterance.
 type Utterance struct {
 	Speaker string `json:"speaker" jsonschema_description:"Speaker name or role"`
 	Text    string `json:"text" jsonschema_description:"What the speaker says"`
 }
 
-// Discussion は元の議論または変種（テキストとグラフ）。
+// Discussion is a source argument or a variant (text and graph).
 type Discussion struct {
 	Utterances []Utterance `json:"utterances"`
 	Graph      ged.Graph   `json:"graph"`
-	// PropUtterance は命題 → それを述べる発話の番号（元の議論だけ）。
+	// PropUtterance maps proposition → index of the utterance stating it (source arguments only).
 	PropUtterance map[string]int `json:"prop_utterance,omitempty"`
 }
 
-// Render は判定に見せるテキスト。
+// Render is the text shown for judgment.
 func (d Discussion) Render() string {
 	var b strings.Builder
 	for _, u := range d.Utterances {
@@ -61,7 +61,7 @@ func (d Discussion) Render() string {
 	return b.String()
 }
 
-// Spec は元の議論の割り付け（計画 §4.1 の因子）。
+// Spec is the allocation of a source argument (the factors of plan §4.1).
 type Spec struct {
 	Format    string `json:"format"`
 	Domain    string `json:"domain"`
@@ -70,7 +70,7 @@ type Spec struct {
 	Structure string `json:"structure"`
 }
 
-// sourceOut は元の議論の生成の構造化出力。
+// sourceOut is the structured output of source argument generation.
 type sourceOut struct {
 	Utterances   []Utterance `json:"utterances"`
 	Propositions []struct {
@@ -85,7 +85,7 @@ type sourceOut struct {
 	} `json:"relations"`
 }
 
-// Generator は LLM の呼び出しをまとめる。
+// Generator bundles LLM calls.
 type Generator struct {
 	Client        llm.Client
 	Model         string
@@ -95,10 +95,10 @@ type Generator struct {
 	VerifyPrompt  Prompt
 }
 
-// Usage はコストの集計（呼び出しの用途ごと）。
+// Usage aggregates cost (per call purpose).
 type Usage map[string]llm.Usage
 
-// GenerateSource は元の議論を作る。prefix は命題 ID の接頭辞（元の議論ごとに一意にする）。
+// GenerateSource builds a source argument. prefix is the proposition ID prefix (unique per source argument).
 func (g *Generator) GenerateSource(ctx context.Context, spec Spec, prefix string, attempt int) (Discussion, *llm.Response, error) {
 	user := fmt.Sprintf("Format: %s\nTopic area: %s\nNumber of speakers: %d\nTarget number of propositions: %d\nStructure: %s\n",
 		spec.Format, spec.Domain, spec.Speakers, spec.Props, spec.Structure)
@@ -133,7 +133,7 @@ func (g *Generator) GenerateSource(ctx context.Context, spec Spec, prefix string
 		}
 		k := [2]string{min(f, t), max(f, t)}
 		if seen[k] {
-			continue // 同じ対の関係は 1 本だけ残す
+			continue // keep only one relation per pair
 		}
 		seen[k] = true
 		d.Graph.Edges = append(d.Graph.Edges, ged.Edge{From: f, To: t, Kind: r.Kind})
@@ -153,7 +153,7 @@ func short(id string) string {
 	return id
 }
 
-// describe は編集を書き下し用の英語の指示にする。
+// describe turns an edit into an English instruction for realization.
 func describe(e perturb.Edit) string {
 	switch e.Kind {
 	case perturb.PPara:
@@ -200,14 +200,14 @@ type realizeOut struct {
 	} `json:"propositions"`
 }
 
-// RealizeStats は書き下しの機械検査の結果。
+// RealizeStats is the result of mechanically checking a realization.
 type RealizeStats struct {
 	Changed     int `json:"changed"`
 	Connective  int `json:"connective"`
 	MissingText int `json:"missing_text"`
 }
 
-// Instructions は書き下しと検証に渡す編集の指示（話者の入れ替えはハーネスが行うので含めない）。
+// Instructions are the edit instructions passed to realization and verification (speaker swaps are done by the harness, so they are excluded).
 func Instructions(v perturb.Variant) []string {
 	var instr []string
 	for _, e := range v.Edits {
@@ -218,7 +218,7 @@ func Instructions(v perturb.Variant) []string {
 	return instr
 }
 
-// NeedsLLM は LLM での書き下しが要る変種か（話者の入れ替えだけならハーネスで済む）。
+// NeedsLLM reports whether the variant needs LLM realization (speaker swaps alone are handled by the harness).
 func NeedsLLM(v perturb.Variant) bool { return len(Instructions(v)) > 0 }
 
 func swapsSpeakers(v perturb.Variant) bool {
@@ -230,7 +230,7 @@ func swapsSpeakers(v perturb.Variant) bool {
 	return false
 }
 
-// describeSource は元の議論の発話・命題・関係を番号つきで書く。
+// describeSource writes the source argument's utterances, propositions and relations with numbers.
 func describeSource(b *strings.Builder, utts []Utterance, src Discussion) {
 	b.WriteString("Utterances:\n")
 	for i, u := range utts {
@@ -246,8 +246,8 @@ func describeSource(b *strings.Builder, utts []Utterance, src Discussion) {
 	}
 }
 
-// Realize は変種 v を src のテキストに書き下す。変更しない発話はここで原文のまま組む（計画 §4.4）。
-// attempt と feedback は作り直しのときに渡す（0 と "" なら最初の試行）。
+// Realize realizes variant v as text based on src. Unchanged utterances are assembled here verbatim (plan §4.4).
+// attempt and feedback are passed on regeneration (0 and "" for the first attempt).
 func (g *Generator) Realize(ctx context.Context, src Discussion, v perturb.Variant, prefix string, attempt int, feedback string) (Discussion, RealizeStats, *llm.Response, error) {
 	out := Discussion{Graph: v.Graph.Clone()}
 	instr := Instructions(v)
@@ -373,7 +373,7 @@ func swapSpeakers(us []Utterance) []Utterance {
 	return out
 }
 
-// Verification は書き下しの検証の結果（計画 G4。PoC では生成と同じ luna が行う）。
+// Verification is the result of verifying a realization (plan G4; in the PoC, the same luna as generation does it).
 type Verification struct {
 	Edits []struct {
 		Index    int  `json:"index" jsonschema_description:"Number of the requested edit"`
@@ -384,7 +384,7 @@ type Verification struct {
 	Naturalness      string `json:"naturalness" jsonschema:"enum=1,enum=2,enum=3,enum=4,enum=5"`
 }
 
-// Natural は自然さ（1〜5、読めなければ 0）。
+// Natural is naturalness (1–5, or 0 if unreadable).
 func (v Verification) Natural() int {
 	if len(v.Naturalness) == 1 && v.Naturalness[0] >= '1' && v.Naturalness[0] <= '5' {
 		return int(v.Naturalness[0] - '0')
@@ -392,8 +392,8 @@ func (v Verification) Natural() int {
 	return 0
 }
 
-// Problems は不合格の理由（合格なら空）。n は指示した編集の数。
-// 基準: すべての編集が文章に出ている、指示外の変更が無い、自然さ 3 以上（計画 §4.4）。
+// Problems returns the reasons for failing (empty if passed). n is the number of instructed edits.
+// Criteria: every edit appears in the text, no uninstructed changes, naturalness 3 or more (plan §4.4).
 func (v Verification) Problems(n int) []string {
 	var out []string
 	seen := map[int]bool{}
@@ -417,7 +417,7 @@ func (v Verification) Problems(n int) []string {
 	return out
 }
 
-// Verify は書き下した変種 d が変種 v の編集を実現しているかを、別のリクエストで確かめる。
+// Verify checks, in a separate request, whether the realized variant d implements variant v's edits.
 func (g *Generator) Verify(ctx context.Context, src Discussion, d Discussion, v perturb.Variant) (Verification, *llm.Response, error) {
 	var b strings.Builder
 	b.WriteString("ORIGINAL DISCUSSION\n\n")
@@ -439,7 +439,7 @@ type judgeOut struct {
 	Answer string `json:"answer" jsonschema:"enum=1,enum=2,enum=same"`
 }
 
-// JudgeAnswer は判定 1 回の結果（"1" / "2" / "same"）。
+// JudgeAnswer is the result of one judgment ("1" / "2" / "same").
 func (g *Generator) JudgeAnswer(ctx context.Context, s, first, second Discussion) (string, *llm.Response, error) {
 	user := "Original discussion S:\n" + s.Render() +
 		"\nVersion 1:\n" + first.Render() +
@@ -455,7 +455,7 @@ func (g *Generator) JudgeAnswer(ctx context.Context, s, first, second Discussion
 	return out.Answer, resp, nil
 }
 
-// MarshalIndent は JSON の書き出し用。
+// MarshalIndent is for writing JSON.
 func MarshalIndent(v any) []byte {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return b

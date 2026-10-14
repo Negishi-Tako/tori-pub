@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 )
 
-// CachingEmbedder は Embedder のキャッシュ装飾。
+// CachingEmbedder is a caching decorator for Embedder.
 //
-// キャッシュしないと評価をやり直すたびに再課金されるうえ、API の戻り値は同じ入力でも
-// ビット単位で同一とは限らず、Hungarian 法の割当が揺れて指標が再現しなくなる。
+// Without caching, every re-evaluation is billed again, and the API does not always return
+// bit-identical results for the same input, so the Hungarian assignment wobbles and metrics become irreproducible.
 //
-// キーは sha256(モデル名 + 次元数 + テキスト)。モデルか次元が変われば別キーになる。
+// The key is sha256(model name + dimensions + text). A different model or dimension gives a different key.
 type CachingEmbedder struct {
 	inner Embedder
 	dir   string
@@ -37,11 +37,11 @@ func (e *CachingEmbedder) key(text string) string {
 }
 
 func (e *CachingEmbedder) path(key string) string {
-	// 1 ディレクトリにファイルを詰め込みすぎないよう 2 文字で分ける。
+	// Split by 2 characters so a single directory does not hold too many files.
 	return filepath.Join(e.dir, safeTag.ReplaceAllString(e.inner.Model(), "_"), key[:2], key+".json")
 }
 
-// Embed はキャッシュに無いテキストだけを inner に問い合わせる。
+// Embed queries inner only for texts not in the cache.
 func (e *CachingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
@@ -88,7 +88,7 @@ func (e *CachingEmbedder) load(key string) ([]float32, bool) {
 		return nil, false
 	}
 	if len(v) != e.inner.Dim() {
-		// 次元が合わないキャッシュは壊れているので使わない。
+		// A cache entry with mismatched dimensions is broken, so it is not used.
 		return nil, false
 	}
 	return v, true

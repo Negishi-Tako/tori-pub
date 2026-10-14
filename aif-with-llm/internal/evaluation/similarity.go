@@ -11,7 +11,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/llm"
 )
 
-// PRF は precision / recall / F1。
+// PRF is precision / recall / F1.
 type PRF struct {
 	Precision float64 `json:"precision"`
 	Recall    float64 `json:"recall"`
@@ -35,7 +35,7 @@ func newPRF(tp, fp, fn int) PRF {
 	return p
 }
 
-// CosineSimilarity はコサイン類似度。長さが違う場合は 0 を返す。
+// CosineSimilarity is the cosine similarity. It returns 0 if the lengths differ.
 func CosineSimilarity(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
@@ -53,26 +53,26 @@ func CosineSimilarity(a, b []float32) float64 {
 	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
-// simTable はノード ID の組に対するコサイン類似度。
+// simTable holds cosine similarities for pairs of node IDs.
 type simTable map[[2]string]float64
 
 func (s simTable) get(a, b string) float64 {
-	return s[[2]string{a, b}] // 無ければ 0
+	return s[[2]string{a, b}] // 0 if absent
 }
 
-// simTables は比較に使う 3 つの類似度表。
+// simTables are the 3 similarity tables used in comparison.
 //
-//	cross    生成 × ゴールド（ノードの対応付け＝GED の置換コスト）
-//	predSelf 生成 × 生成 の I-node どうし（過剰生成の説明に使う）
-//	goldSelf ゴールド × ゴールド の I-node どうし（取りこぼしの説明に使う）
+//	cross    generated × gold (node matching = GED substitution cost)
+//	predSelf generated × generated, between I-nodes (used to explain over-generation)
+//	goldSelf gold × gold, between I-nodes (used to explain misses)
 type simTables struct {
 	cross    simTable
 	predSelf simTable
 	goldSelf simTable
 }
 
-// textSimilarity は両グラフのテキストを持つノード（I / L）を 1 回でまとめて
-// 埋め込み、総当たりのコサイン類似度表を作る。
+// textSimilarity embeds the text-bearing nodes (I / L) of both graphs in one batch
+// and builds an all-pairs cosine similarity table.
 func textSimilarity(ctx context.Context, pred, gold aif.Graph, emb llm.Embedder) (simTables, error) {
 	textual := func(g aif.Graph) []aif.Node {
 		var out []aif.Node

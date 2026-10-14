@@ -8,21 +8,21 @@ import (
 	"strings"
 )
 
-// ModelPrice は 100 万トークンあたりの USD 単価。
+// ModelPrice is the USD price per million tokens.
 type ModelPrice struct {
 	Input       float64 `json:"input"`
 	CachedInput float64 `json:"cached_input"`
 	Output      float64 `json:"output"`
 }
 
-// PriceTable はモデル名 → 単価。実行ログに出すコストの推定に使う。
+// PriceTable maps model name → price. Used to estimate the cost shown in run logs.
 type PriceTable struct {
 	prices map[string]ModelPrice
 }
 
-// defaultPrices は https://developers.openai.com/api/docs/pricing の値
-// （2026-08-13 時点で確認）。値上げ・新モデルに追随する必要があるため、
-// 実験前に PRICING_FILE で上書きできるようにしてある。
+// defaultPrices are the values from https://developers.openai.com/api/docs/pricing
+// (checked as of 2026-08-13). Since prices rise and new models appear,
+// they can be overridden with PRICING_FILE before an experiment.
 var defaultPrices = map[string]ModelPrice{
 	"gpt-5.6-sol":            {Input: 5.00, CachedInput: 0.50, Output: 30.00},
 	"gpt-5.6-terra":          {Input: 2.00, CachedInput: 0.20, Output: 12.00},
@@ -42,7 +42,7 @@ var defaultPrices = map[string]ModelPrice{
 	"text-embedding-3-large": {Input: 0.13},
 }
 
-// defaultEmbeddingDims は既定の埋め込み次元（EMBEDDING_DIM=0 のときに使う）。
+// defaultEmbeddingDims are the default embedding dimensions (used when EMBEDDING_DIM=0).
 var defaultEmbeddingDims = map[string]int{
 	"text-embedding-3-small": 1536,
 	"text-embedding-3-large": 3072,
@@ -52,8 +52,8 @@ func DefaultPricing() *PriceTable {
 	return &PriceTable{prices: maps.Clone(defaultPrices)}
 }
 
-// LoadPricing は JSON ファイル（{"model": {"input":..,"cached_input":..,"output":..}}）で
-// 既定表を上書きする。path が空なら既定表をそのまま返す。
+// LoadPricing overrides the default table with a JSON file ({"model": {"input":..,"cached_input":..,"output":..}}).
+// If path is empty, the default table is returned as-is.
 func LoadPricing(path string) (*PriceTable, error) {
 	t := DefaultPricing()
 	if path == "" {
@@ -71,8 +71,8 @@ func LoadPricing(path string) (*PriceTable, error) {
 	return t, nil
 }
 
-// Price はモデルの単価を返す。API が返す "gpt-5-mini-2026-01-01" のような
-// 日付サフィックス付きモデル名は、最長前方一致でベースモデルに寄せる。
+// Price returns the model's price. Model names with a date suffix returned by the API,
+// such as "gpt-5-mini-2026-01-01", are mapped to the base model by longest prefix match.
 func (t *PriceTable) Price(model string) (ModelPrice, bool) {
 	if p, ok := t.prices[model]; ok {
 		return p, true
@@ -89,7 +89,7 @@ func (t *PriceTable) Price(model string) (ModelPrice, bool) {
 	return best, bestLen > 0
 }
 
-// ChatCost は使用量から推定コスト（USD）を計算する。単価不明なら 0 を返す。
+// ChatCost computes the estimated cost (USD) from usage. Returns 0 if the price is unknown.
 func (t *PriceTable) ChatCost(model string, u Usage) float64 {
 	p, ok := t.Price(model)
 	if !ok {

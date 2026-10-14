@@ -1,9 +1,9 @@
-// Package llm は LLM / 埋め込みモデルへのアクセスを一箇所に集める。
+// Package llm centralizes access to LLMs and embedding models.
 //
-// 規約:
-//   - 他パッケージから openai SDK を直接 import しない。必ずこの Client 経由。
-//   - 構造化出力は必ず JSON Schema 制約付き（Structured Outputs）で行う。
-//   - 生レスポンス（Response.Raw）は捨てない（キャッシュにそのまま残る）。
+// Conventions:
+//   - Other packages must not import the openai SDK directly. Always go through this Client.
+//   - Structured output always uses JSON Schema constraints (Structured Outputs).
+//   - Raw responses (Response.Raw) are never discarded (they remain in the cache as-is).
 package llm
 
 import (
@@ -13,7 +13,7 @@ import (
 	"fmt"
 )
 
-// Role はメッセージの役割。
+// Role is a message role.
 type Role string
 
 const (
@@ -21,7 +21,7 @@ const (
 	RoleUser   Role = "user"
 )
 
-// Message は 1 メッセージ。
+// Message is a single message.
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
@@ -30,28 +30,28 @@ type Message struct {
 func System(content string) Message { return Message{Role: RoleSystem, Content: content} }
 func User(content string) Message   { return Message{Role: RoleUser, Content: content} }
 
-// Schema は Structured Outputs に渡す JSON Schema。
+// Schema is the JSON Schema passed to Structured Outputs.
 type Schema struct {
-	// Name は a-z / A-Z / 0-9 / _ / - のみ、64 文字以内（OpenAI の制約）。
+	// Name may contain only a-z / A-Z / 0-9 / _ / -, up to 64 characters (an OpenAI constraint).
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Strict      bool            `json:"strict"`
 	JSON        json.RawMessage `json:"json"`
 }
 
-// Request は 1 回の補完要求。キャッシュキーはこの構造体から決まるため、
-// 「同じ Request なら同じ結果」であってほしい値だけを入れる。
+// Request is a single completion request. The cache key is derived from this struct, so
+// it should contain only values for which "same Request means same result" is desired.
 type Request struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
-	// Temperature / Seed は nil なら未指定（推論系モデルは温度指定を受け付けないため）。
+	// Temperature / Seed are unspecified when nil (reasoning models do not accept a temperature).
 	Temperature *float64 `json:"temperature,omitempty"`
 	Seed        *int64   `json:"seed,omitempty"`
 	MaxTokens   int64    `json:"max_tokens,omitempty"`
-	// Schema が非 nil なら Structured Outputs を使う。
+	// If Schema is non-nil, Structured Outputs is used.
 	Schema *Schema `json:"schema,omitempty"`
-	// Tag は用途名（"aif_relation" 等）。
-	// キャッシュの名前空間とコスト集計のラベルに使う。結果には影響しない。
+	// Tag is the purpose name ("aif_relation", etc.).
+	// Used as the cache namespace and the cost-aggregation label. It does not affect the result.
 	Tag string `json:"-"`
 }
 
@@ -65,10 +65,10 @@ func (r Request) Validate() error {
 	return nil
 }
 
-// Usage はトークン使用量と推定コスト。
+// Usage is token usage and estimated cost.
 type Usage struct {
 	InputTokens int64 `json:"input_tokens"`
-	// CachedInputTokens は OpenAI 側の prompt cache でヒットした入力トークン。
+	// CachedInputTokens are input tokens that hit OpenAI's prompt cache.
 	CachedInputTokens int64   `json:"cached_input_tokens"`
 	OutputTokens      int64   `json:"output_tokens"`
 	CostUSD           float64 `json:"cost_usd"`
@@ -83,34 +83,34 @@ func (u Usage) Add(other Usage) Usage {
 	}
 }
 
-// Response は補完結果。
+// Response is a completion result.
 type Response struct {
 	Text         string          `json:"text"`
 	Model        string          `json:"model"`
 	FinishReason string          `json:"finish_reason"`
 	Usage        Usage           `json:"usage"`
 	Raw          json.RawMessage `json:"raw,omitempty"`
-	// Cached はローカルキャッシュから返した場合 true（コストは 0 として扱う）。
+	// Cached is true when returned from the local cache (cost is treated as 0).
 	Cached    bool  `json:"cached"`
 	LatencyMS int64 `json:"latency_ms"`
 }
 
-// Client は LLM 補完の抽象。実装は OpenAI と、キャッシュ・レート制御の装飾。
+// Client abstracts LLM completion. Implementations are OpenAI plus caching and rate-control decorators.
 type Client interface {
 	Complete(ctx context.Context, req Request) (*Response, error)
 }
 
-// Embedder は埋め込み推論の抽象。
+// Embedder abstracts embedding inference.
 type Embedder interface {
-	// Embed は texts と同じ順序・同じ長さのベクトル列を返す。
+	// Embed returns vectors in the same order and of the same length as texts.
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
-	// Model はモデル名（埋め込みキャッシュのキーに入る）。
+	// Model is the model name (part of the embedding cache key).
 	Model() string
-	// Dim はベクトル次元数（埋め込みキャッシュのキーに入る）。
+	// Dim is the vector dimension (part of the embedding cache key).
 	Dim() int
 }
 
-// APIError は上流 API のエラー。リトライ判定に使う。
+// APIError is an upstream API error. Used to decide whether to retry.
 type APIError struct {
 	StatusCode int
 	Message    string
@@ -126,7 +126,7 @@ func (e *APIError) Error() string {
 
 func (e *APIError) Unwrap() error { return e.Err }
 
-// Retryable は一時的な失敗か判定する。429 と 5xx、408/409 を対象にする。
+// Retryable reports whether the failure is transient. Covers 429, 5xx and 408/409.
 func (e *APIError) Retryable() bool {
 	switch e.StatusCode {
 	case 408, 409, 429:
@@ -135,7 +135,7 @@ func (e *APIError) Retryable() bool {
 	return e.StatusCode >= 500
 }
 
-// IsRetryable はエラー鎖のどこかに再試行可能な APIError があるか調べる。
+// IsRetryable reports whether a retryable APIError appears anywhere in the error chain.
 func IsRetryable(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {

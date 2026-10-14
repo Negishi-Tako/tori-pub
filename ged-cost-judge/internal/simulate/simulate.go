@@ -1,7 +1,7 @@
-// Package simulate は API を使わずに三つ組と判定を合成する（計画 §6.5 / P1）。
+// Package simulate synthesizes triplets and judgments without using the API (plan §6.5 / P1).
 //
-// 判定者の「真のコスト」θ* を現行値からずらして置き、そのコストでの GED の差から 3 択の判定を作る。
-// 推定がθ* を取り戻せるか（識別性とパラメータの回収）を確かめるのが目的である。
+// The judges' "true costs" θ* are set off from the current values, and 3-way judgments are produced from GED differences at those costs.
+// The goal is to check whether estimation recovers θ* (identifiability and parameter recovery).
 package simulate
 
 import (
@@ -16,26 +16,26 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/perturb"
 )
 
-// Judge は合成の判定者。
+// Judge is a synthetic judge.
 type Judge struct {
 	Beta, Tau, Pi float64
 }
 
-// Config はシミュレーションの設定。
+// Config configures the simulation.
 type Config struct {
-	Sources  int // 元の議論の数（1 件につき三つ組 4 つ）
+	Sources  int // number of source arguments (4 triplets each)
 	PerSrc   int
 	Seed     uint64
 	True     ged.Theta
 	TrueNeg  float64
 	Judges   []Judge
-	Sigma    float64 // 三つ組ごとに全判定者が共有するずれ ε_t の標準偏差
-	Random   float64 // 無作為に答える確率
+	Sigma    float64 // standard deviation of the per-triplet offset ε_t shared by all judges
+	Random   float64 // probability of answering at random
 	MinProps int
 	MaxProps int
 }
 
-// Default は計画 §6.5 の本命の想定（β ≈ 2、σ = 1、無作為 10%）。
+// Default is the main scenario of plan §6.5 (β ≈ 2, σ = 1, 10% random).
 func Default() Config {
 	tr := ged.Current()
 	tr[ged.PNodeMissing] = 1.3
@@ -51,12 +51,12 @@ func Default() Config {
 	}
 }
 
-// Meta は三つ組の付帯情報。
+// Meta is auxiliary information about a triplet.
 type Meta struct {
 	Type   perturb.TripletType
 	EditsA []perturb.Edit
 	EditsB []perturb.Edit
-	// TrueDelta は θ* での Δ（極性反転の重みを含む）。
+	// TrueDelta is Δ at θ* (including the polarity-flip weight).
 	TrueDelta float64
 }
 
@@ -86,7 +86,7 @@ func (w *world) source(src int, cfg Config) ged.Graph {
 	}
 	for i := 1; i < n; i++ {
 		if w.rng.Float64() < 0.15 {
-			continue // 関係を持たない命題
+			continue // propositions without relations
 		}
 		parent := w.rng.IntN(i)
 		kind := ged.RA
@@ -128,11 +128,11 @@ func (w *world) cosFor(e perturb.Edit) float64 {
 	return 1
 }
 
-// sim は変種の命題と元の命題の cos の表を作り、それを引く関数を返す。
-// 推定は三つ組を並列に処理するので、表は作るときに全部埋めておく（関数は読むだけ）。
+// sim builds a table of cos between variant and source propositions and returns a function that looks it up.
+// Estimation processes triplets in parallel, so the table is fully populated up front (the function only reads).
 func (w *world) sim(src ged.Graph, v perturb.Variant, tag string) ged.Sim {
 	own := map[string]float64{}
-	for _, id := range slices.Sorted(maps.Keys(v.Changed)) { // 乱数を引く順を固定する
+	for _, id := range slices.Sorted(maps.Keys(v.Changed)) { // fix the order of random draws
 		own[id] = w.cosFor(v.Changed[id])
 	}
 	table := map[[2]string]float64{}
@@ -141,7 +141,7 @@ func (w *world) sim(src ged.Graph, v perturb.Variant, tag string) ged.Sim {
 			var c float64
 			switch o, ok := v.Origin[p.ID]; {
 			case !ok:
-				c = w.baseCos(r.ID, tag+"/"+p.ID) // 足した命題はどの命題とも無関係
+				c = w.baseCos(r.ID, tag+"/"+p.ID) // an added proposition is unrelated to every proposition
 			case o == r.ID:
 				c = 1
 				if x, ok := own[p.ID]; ok {
@@ -156,7 +156,7 @@ func (w *world) sim(src ged.Graph, v perturb.Variant, tag string) ged.Sim {
 	return func(ref, vid string) float64 { return table[[2]string{ref, vid}] }
 }
 
-// Generate は三つ組と判定を合成する。
+// Generate synthesizes triplets and judgments.
 func Generate(cfg Config) ([]fit.Triplet, []fit.Judgment, []Meta, error) {
 	w := &world{rng: rand.New(rand.NewPCG(cfg.Seed, 0x5eed)), base: map[[2]string]float64{}}
 	th0 := ged.Current()
@@ -182,7 +182,7 @@ func Generate(cfg Config) ([]fit.Triplet, []fit.Judgment, []Meta, error) {
 				if typ != perturb.T3Contrast || attempt >= 50 {
 					break
 				}
-				// T3 は現行コストで差が 0 付近のものと明確なものを半々にする（計画 §4.3）。
+				// For T3, half have a difference near 0 under current costs and half a clear difference (plan §4.3).
 				d, err := delta(src, va, vb, sa, sb, th0)
 				if err != nil {
 					return nil, nil, nil, err

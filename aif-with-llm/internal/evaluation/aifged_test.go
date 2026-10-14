@@ -11,7 +11,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/llm"
 )
 
-// compare は既定の設定で metric の版を指定して比べる。
+// compare compares with the default settings and the given metric version.
 func compare(t *testing.T, pred, gold aif.Graph, metric string) *evaluation.AIFComparison {
 	t.Helper()
 	return compareWith(t, pred, gold, metric, evaluation.DefaultAIFWeights())
@@ -28,8 +28,8 @@ func compareWith(t *testing.T, pred, gold aif.Graph, metric string, w evaluation
 	return c
 }
 
-// 同一グラフ同士の比較は、どの版でも GED 0・全 F1 が 1.0 になること。
-// ここが崩れると、以降の数値はすべて意味を失う。
+// Comparing a graph with itself must give GED 0 and all F1 1.0 in every version.
+// If this breaks, every number that follows becomes meaningless.
 func TestCompareAIFIdenticalGraphs(t *testing.T) {
 	g := relGraph([]string{"schools should reopen", "the infection rate is falling"}, [][3]int{{1, 0, 0}})
 	for _, m := range evaluation.AIFMetrics {
@@ -46,20 +46,20 @@ func TestCompareAIFIdenticalGraphs(t *testing.T) {
 	}
 }
 
-// 関係 1 本の誤りの扱いが版でどう変わるか。
+// How the treatment of a single relation error changes across versions.
 //
-//	0.1  辺の完全一致か全損か（挿入 1.0 + 削除 1.0 = 2.0）
-//	0.2  同じ命題対に正解の辺があれば置換（部分点）。ただし全体グラフには効かない
-//	0.3  部分点を全体グラフにも効かせ、関係の誤りのコストを粒度によらず同じにする
+//	0.1  edges are exact match or total loss (insertion 1.0 + deletion 1.0 = 2.0)
+//	0.2  substitution (partial credit) if a gold edge exists on the same proposition pair, but not in the overall graph
+//	0.3  partial credit applies to the overall graph too, so a relation error costs the same at any granularity
 //
-// あわせて、関係の診断（無向で当たり・向きを逆と数える）が版によらないこと。
+// Also, relation diagnostics (counting undirected hits and reversals) must not depend on the version.
 func TestRelationErrorCostByMetricVersion(t *testing.T) {
 	gold := twoPropGraph(aif.TypeMA, false)
 	w := evaluation.DefaultAIFWeights()
 	cases := []struct {
 		name     string
 		pred     aif.Graph
-		want     float64 // 0.2 / 0.3 の命題グラフでの辺のコスト
+		want     float64 // edge cost in the 0.2 / 0.3 proposition graph
 		reversed int
 	}{
 		{"種別違い（MA を RA と判定）", twoPropGraph(aif.TypeRA, false), w.EdgeTypeMismatch, 0},
@@ -86,12 +86,12 @@ func TestRelationErrorCostByMetricVersion(t *testing.T) {
 	}
 }
 
-// 構造ノード（TA）の並び順を変えただけのグラフ。
+// A graph that differs only in the order of structural nodes (TAs).
 //
-// 0.1 は TA を Hungarian 法に載せており、TA どうしは置換コスト 0 で
-// 互いに区別が付かないため、並び順が変わると別の TA に割り当てられて
-// L→TA→L の辺が誤りとして数えられてしまう。
-// 0.2 以降は TA の対応を L の対応から導出するので、並び順に影響されない。
+// 0.1 put TAs into the Hungarian method, and TAs have substitution cost 0 with each other
+// and are indistinguishable, so changing their order assigns them to different TAs
+// and L→TA→L edges are counted as errors.
+// 0.2 and later derive TA correspondences from L correspondences, so order does not matter.
 func TestDerivedCorrespondenceIsRobustToStructuralNodeOrder(t *testing.T) {
 	gold := chainGraph([]string{"alpha", "beta", "gamma"}, false)
 	pred := chainGraph([]string{"alpha", "beta", "gamma"}, true)
@@ -105,11 +105,11 @@ func TestDerivedCorrespondenceIsRobustToStructuralNodeOrder(t *testing.T) {
 	}
 }
 
-// 遷移に anchor される YA の扱い。
+// Treatment of YAs anchored to transitions.
 //
-// pred 側は「隣接しない発話同士の関係には TA が無いので YA も作らない」という
-// harness の構成規則で YA の個数が決まる。0.2 はその差を全体 GED で罰し、
-// YA/TA を割り引く重みで値が動く。0.3 は全体グラフから外すので、どちらも起きない。
+// On the pred side, the YA count is fixed by the harness construction rule "relations between
+// non-adjacent utterances have no TA, so no YA is created". 0.2 penalizes that difference in the overall GED,
+// and the value moves with weights discounting YA/TA. 0.3 removes them from the overall graph, so neither happens.
 func TestRelationAnchoredYAOnlyCountsUpToV2(t *testing.T) {
 	gold := twoPropGraph(aif.TypeMA, false)
 	gold.Nodes = append(gold.Nodes, aif.Node{ID: "YAS", Type: aif.TypeYA, Text: "Restating", Scheme: "Restating"})
@@ -129,13 +129,13 @@ func TestRelationAnchoredYAOnlyCountsUpToV2(t *testing.T) {
 	}
 }
 
-// 出力を増やすだけで類似度が上がらないこと（0.3 で gold 基準の正規化を主指標にした理由）。
+// Merely emitting more output must not raise similarity (the reason 0.3 made gold-based normalization the primary metric).
 //
-// 対称正規化は分母が pred の大きさを含むので、編集コストが同じでも「多く出した方」が高く出る。
+// Symmetric normalization includes pred's size in the denominator, so even at the same edit cost, "emitting more" scores higher.
 func TestGoldNormalizationDoesNotRewardVerbosity(t *testing.T) {
 	texts := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
 	gold := relGraph(texts, [][3]int{{1, 0, 0}, {2, 1, 0}, {3, 2, 0}, {4, 3, 0}})
-	// 何も張らない: 4 本取りこぼし（4.0）。4 本張る: 2 本当たり・取りこぼし 2・過剰 2（4.0）。
+	// Emit nothing: 4 missed (4.0). Emit 4: 2 hits, 2 missed, 2 extra (4.0).
 	quiet := compare(t, relGraph(texts, nil), gold, evaluation.MetricGEDv3).ReducedGED
 	loud := compare(t, relGraph(texts, [][3]int{{1, 0, 0}, {2, 1, 0}, {4, 0, 0}, {3, 0, 0}}), gold, evaluation.MetricGEDv3).ReducedGED
 	if quiet.GED != loud.GED {
@@ -149,24 +149,24 @@ func TestGoldNormalizationDoesNotRewardVerbosity(t *testing.T) {
 	}
 }
 
-// 同じ命題対に 2 本張っても、ゴールドの 1 本を二重に当てない（再現率が 1 を超えない）。
+// Two relations on the same proposition pair must not both hit the single gold relation (recall must not exceed 1).
 func TestRelationScoreConsumesEachGoldRelationOnce(t *testing.T) {
 	gold := relGraph([]string{"alpha", "beta"}, [][3]int{{1, 0, 0}})
-	pred := relGraph([]string{"alpha", "beta"}, [][3]int{{1, 0, 0}, {1, 0, 2}}) // RA と MA
+	pred := relGraph([]string{"alpha", "beta"}, [][3]int{{1, 0, 0}, {1, 0, 2}}) // RA and MA
 	r := compare(t, pred, gold, evaluation.MetricGEDv3).Relations
 	if r.Undirected.TP != 1 || r.Typed.TP != 1 || r.Undirected.Recall > 1 {
 		t.Errorf("ゴールド 1 本に当てられるのは 1 本だけのはず: %+v", r)
 	}
 }
 
-// 距離帯の集計: 遠い関係の取りこぼしが、全体の F1 ではなく帯ごとの R に出ること。
-// 帯ごとの精度は分子・分母とも生成側の帯で数える（ゴールド側の帯で数えると 1 を超えうる）。
+// Distance-band aggregation: missing distant relations must show up in per-band R, not in overall F1.
+// Per-band precision counts both numerator and denominator by the generated-side band (counting by gold-side band can exceed 1).
 func TestRelationScoreSplitsByDistance(t *testing.T) {
 	texts := make([]string, 12)
 	for i := range texts {
 		texts[i] = "claim " + strconv.Itoa(i)
 	}
-	gold := relGraph(texts, [][3]int{{1, 0, 0}, {11, 0, 0}}) // 隣接 1 本 + 距離 11 の 1 本
+	gold := relGraph(texts, [][3]int{{1, 0, 0}, {11, 0, 0}}) // one adjacent + one at distance 11
 	pred := relGraph(texts, [][3]int{{1, 0, 0}})
 	by := compare(t, pred, gold, evaluation.MetricGEDv3).Relations.ByDistance
 	near, far := by["1"], by["10+"]
@@ -178,8 +178,8 @@ func TestRelationScoreSplitsByDistance(t *testing.T) {
 	}
 }
 
-// relGraph は chainGraph に関係を足したグラフ。
-// rels の各要素は {src の索引, dst の索引, 種別（0=RA, 1=CA, 2=MA）}。
+// relGraph is chainGraph with relations added.
+// Each element of rels is {src index, dst index, type (0=RA, 1=CA, 2=MA)}.
 func relGraph(texts []string, rels [][3]int) aif.Graph {
 	g := chainGraph(texts, false)
 	kinds := []aif.NodeType{aif.TypeRA, aif.TypeCA, aif.TypeMA}
@@ -194,8 +194,8 @@ func relGraph(texts []string, rels [][3]int) aif.Graph {
 	return out
 }
 
-// chainGraph は「話者 A が n 回続けて発話する」だけの AIF グラフを作る。
-// reverseTA が true なら TA ノードの並び順だけを逆にする（内容は同じ）。
+// chainGraph builds an AIF graph where "speaker A makes n consecutive utterances" and nothing else.
+// If reverseTA is true, only the order of TA nodes is reversed (same content).
 func chainGraph(texts []string, reverseTA bool) aif.Graph {
 	locs := make([]aif.LocutionInput, len(texts))
 	for i, txt := range texts {
@@ -216,7 +216,7 @@ func chainGraph(texts []string, reverseTA bool) aif.Graph {
 	return g
 }
 
-// twoPropGraph は命題 2 つを 1 本の関係で結んだグラフ。
+// twoPropGraph is a graph with two propositions connected by one relation.
 func twoPropGraph(kind aif.NodeType, reversed bool) aif.Graph {
 	rel := [3]int{1, 0, map[aif.NodeType]int{aif.TypeRA: 0, aif.TypeCA: 1, aif.TypeMA: 2}[kind]}
 	if reversed {
@@ -225,11 +225,11 @@ func twoPropGraph(kind aif.NodeType, reversed bool) aif.Graph {
 	return relGraph([]string{"the schools should reopen", "the schools ought to open again"}, [][3]int{rel})
 }
 
-// 端点が対応付かなかった生成側の関係（過剰生成）も、帯ごとの精度の分母に入ること。
-// 以前は分母から外れており、帯ごとの精度が過大になっていた。
+// Generated relations whose endpoints were not matched (over-generation) must also count in the per-band precision denominator.
+// Previously they were excluded from the denominator, inflating per-band precision.
 func TestDistanceBandPrecisionCountsUnmatchedPredictions(t *testing.T) {
 	gold := relGraph([]string{"a", "b"}, [][3]int{{1, 0, 0}})
-	// 生成側は命題が 4 つ。I3→I2 は端点がゴールドに対応しない。
+	// The generated side has 4 propositions. The endpoints of I3→I2 do not match the gold.
 	pred := relGraph([]string{"a", "b", "c", "d"}, [][3]int{{1, 0, 0}, {3, 2, 0}})
 	r := compare(t, pred, gold, evaluation.MetricGEDv3).Relations
 	total := 0
@@ -241,12 +241,12 @@ func TestDistanceBandPrecisionCountsUnmatchedPredictions(t *testing.T) {
 	}
 }
 
-// 同じ命題対に種別の違う関係を 2 本出したとき、出力の順序で結果が変わらないこと。
-// 以前は先に処理した関係が別種別のゴールドを取ってしまい、完全一致が数えられなかった。
+// When two relations of different types are emitted on the same proposition pair, output order must not change the result.
+// Previously the relation processed first took the gold of a different type, and the exact match was not counted.
 func TestRelationMatchingIsOrderIndependent(t *testing.T) {
 	gold := relGraph([]string{"a", "b"}, [][3]int{{1, 0, 1}}) // CA
 	for _, order := range [][][3]int{{{1, 0, 0}, {1, 0, 1}}, {{1, 0, 1}, {1, 0, 0}}} {
-		c := compare(t, relGraph([]string{"a", "b"}, order), gold, evaluation.MetricGEDv3) // RA と CA
+		c := compare(t, relGraph([]string{"a", "b"}, order), gold, evaluation.MetricGEDv3) // RA and CA
 		if c.Relations.Typed.TP != 1 || c.Relations.Undirected.TP != 1 {
 			t.Errorf("順序 %v: 完全一致 1 本・過剰生成 1 本のはず: %+v", order, c.Relations)
 		}
@@ -254,7 +254,7 @@ func TestRelationMatchingIsOrderIndependent(t *testing.T) {
 			t.Errorf("順序 %v: 完全一致 0 + 過剰生成 1.0 のはず: %v (%+v)", order, c.ReducedGED.GED, c.ReducedGED.Edges)
 		}
 	}
-	// 向きの逆転も同様: 逆向き 1 本より、もう 1 本の完全一致を優先する。
+	// Likewise for reversal: prefer the other relation's exact match over one reversed relation.
 	gold = relGraph([]string{"a", "b"}, [][3]int{{1, 0, 0}})
 	c := compare(t, relGraph([]string{"a", "b"}, [][3]int{{0, 1, 0}, {1, 0, 0}}), gold, evaluation.MetricGEDv3)
 	if c.Relations.Typed.TP != 1 || c.Relations.Reversed != 0 {
@@ -262,13 +262,13 @@ func TestRelationMatchingIsOrderIndependent(t *testing.T) {
 	}
 }
 
-// S-node の対応の導出（0.2 の全体グラフで使う）も、出力の順序に依存しないこと。
-// 以前は先に出た CA がゴールドの RA を取り、0.2 の全体 GED が順序次第で 3.00 / 7.75 に割れていた。
+// Deriving S-node correspondences (used in 0.2's overall graph) must not depend on output order either.
+// Previously the CA emitted first took the gold RA, and 0.2's overall GED split into 3.00 / 7.75 depending on order.
 func TestDeriveIsOrderIndependent(t *testing.T) {
 	texts := []string{"alpha one", "beta two", "gamma three"}
 	gold := relGraph(texts, [][3]int{{0, 1, 0}}) // RA
 	var got []float64
-	for _, order := range [][][3]int{{{0, 1, 1}, {0, 1, 0}}, {{0, 1, 0}, {0, 1, 1}}} { // CA と RA
+	for _, order := range [][][3]int{{{0, 1, 1}, {0, 1, 0}}, {{0, 1, 0}, {0, 1, 1}}} { // CA and RA
 		got = append(got, compare(t, relGraph(texts, order), gold, evaluation.MetricGEDv2).FullGED.GED)
 	}
 	if got[0] != got[1] {
@@ -276,13 +276,13 @@ func TestDeriveIsOrderIndependent(t *testing.T) {
 	}
 }
 
-// 0.4 の全体グラフは TA を数えないこと。L / I / 発話の YA と関係がゴールドと同じなら、
-// TA の張り方（ゴールドは分岐、生成は隣接の鎖）が違っても GED は 0。0.3 は TA の差を数える。
+// 0.4's overall graph must not count TAs. If L / I / utterance YAs and relations match the gold,
+// GED is 0 even if TAs are placed differently (the gold branches, the generated side is an adjacent chain). 0.3 counts the TA difference.
 func TestGEDv4IgnoresTransitionStructure(t *testing.T) {
 	texts := []string{"alpha one", "beta two", "gamma three"}
 	pred := relGraph(texts, [][3]int{{1, 0, 0}})
 	gold := relGraph(texts, [][3]int{{1, 0, 0}})
-	// ゴールドに L0→L2 の TA を足す（分岐。生成側の鎖には無い）。
+	// Add an L0→L2 TA to the gold (a branch, absent from the generated chain).
 	gold.Nodes = append(gold.Nodes, aif.Node{ID: "TAx", Type: aif.TypeTA, Scheme: aif.SchemeDefaultTransition})
 	gold.Edges = append(gold.Edges, aif.Edge{FromID: "L0", ToID: "TAx"}, aif.Edge{FromID: "TAx", ToID: "L2"})
 	if v4 := compare(t, pred, gold, evaluation.MetricGEDv4); v4.FullGED.GED != 0 {
@@ -293,8 +293,8 @@ func TestGEDv4IgnoresTransitionStructure(t *testing.T) {
 	}
 }
 
-// 向き違いの辺のコストは「出さない」と同じで、「正解に対応の無い関係を出す」より 1.0 安い。
-// 向き違いに「出さない」より得を与えない（向きを判定せずに出す戦略を報わない）ことを固定する。
+// A wrongly directed edge costs the same as "emitting nothing", and 1.0 less than "emitting a relation with no gold counterpart".
+// This pins down that direction errors gain nothing over "emitting nothing" (no reward for emitting without judging direction).
 func TestReversedRelationCostsSameAsOmission(t *testing.T) {
 	texts := []string{"alpha one", "beta two", "gamma three"}
 	gold := relGraph(texts, [][3]int{{0, 1, 0}})

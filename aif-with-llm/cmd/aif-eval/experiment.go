@@ -14,7 +14,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/llm"
 )
 
-// ---------- 実行 ----------
+// ---------- Running ----------
 
 type runOptions struct {
 	DataDir    string
@@ -26,24 +26,24 @@ type runOptions struct {
 	Model      string
 	Threshold  float64
 	Seed       int64
-	// PromptSet はプロンプト一式の版（promptSets を参照）。
+	// PromptSet is the version of the prompt set (see promptSets).
 	PromptSet string
-	// Metrics は計算する GED 実装の版。同じグラフを複数の指標で測って、
-	// 「指標の設計が結論を変えていないか」を確かめるために複数指定できる。
+	// Metrics are the GED implementation versions to compute. Several can be given so the same
+	// graph is measured with multiple metrics, to check that the metric design is not changing the conclusion.
 	Metrics []string
-	// Split は使う分割（splits を参照）。
+	// Split is the split to use (see splits).
 	Split string
 }
 
-// 分割はサブコーパス（= QT の 1 エピソード）単位で固定する。
+// Splits are fixed per subcorpus (= one QT episode).
 //
-// ノードセット単位で分けるとリークになる。同一エピソードのノードセットは
-// 同じ論題・同じ話者の連続した区間なので、dev で規則を作って test で測っても
-// 「同じ議論の別の断片」を見ているだけになる。
+// Splitting per nodeset would leak. Nodesets from the same episode are consecutive
+// stretches with the same topic and speakers, so building rules on dev and measuring
+// on test would only look at "another fragment of the same debate".
 //
-// dev は v1 → v2 → v3 の規則を導いた 20 件を含む 3 エピソード。
-// これらの規則（特に MA/CA の向き）は dev のゴールドの観察から作ったので、
-// **test でプロンプトを触ってはいけない**。
+// dev is the 3 episodes containing the 20 items from which the v1 → v2 → v3 rules were derived.
+// Those rules (especially the MA/CA direction) came from observing dev's gold, so
+// **the prompts must not be touched based on test**.
 const (
 	splitAll  = "all"
 	splitDev  = "dev"
@@ -63,92 +63,92 @@ var splits = map[string][]string{
 	},
 }
 
-// promptSet は各段階のプロンプトと、関係の受け方の組み合わせ。
+// promptSet combines the prompts for each stage with how relations are received.
 //
-// 版が上がるほど IAT の仕様に忠実になる。v1 → v2 → v3 の差は「正解に合わせた
-// チューニング」ではなく、IAT が定めているが実装が伝えていなかった規則を
-// 足したものである（レポート §4.3 の E1 を参照）。
+// Later versions follow the IAT specification more faithfully. The differences v1 → v2 → v3
+// are not "tuning toward the answers"; they add rules that IAT defines but the
+// implementation did not convey (see E1 in §4.3 of the report).
 type promptSet struct {
 	locution   string
 	illocution string
 	relation   string
-	// verify が空でなければ stage 4（検証パス）を掛ける。
+	// If verify is non-empty, stage 4 (the verification pass) is applied.
 	verify string
-	// scored が true なら関係を確信度つきスキーマで受ける。
+	// If scored is true, relations are received with a confidence schema.
 	scored bool
-	// candidate が空でなければ、stage 3 を「候補対を 1 つずつ判定させる」方式で行う。
+	// If candidate is non-empty, stage 3 judges candidate pairs one at a time.
 	candidate string
-	// adjacent が true なら stage 3 を LLM ではなく機械的な規則で作る（基準線）。
+	// If adjacent is true, stage 3 is built by a mechanical rule instead of the LLM (baseline).
 	adjacent bool
-	// graded が true なら関係を 5 段階の依存度つきスキーマで受ける。
+	// If graded is true, relations are received with a 5-level dependence schema.
 	graded bool
-	// restrictForces は stage 2 の発話行為の選択肢を、L-node に anchor できる力
-	// だけに絞るか。IAT では Arguing / Restating は遷移に anchor される力なので、
-	// 発話単位の選択肢に混ぜてはいけない。
+	// restrictForces limits stage 2's illocutionary-force choices to forces that can be
+	// anchored to an L-node. In IAT, Arguing / Restating are anchored to transitions,
+	// so they must not be mixed into the per-utterance choices.
 	restrictForces bool
 }
 
 var promptSets = map[string]promptSet{
-	// v1: 発話行為を anchor 位置で絞らない。関係の向きの規則も伝えない（初版）。
+	// v1: does not filter illocutions by anchor position, nor convey relation-direction rules (initial version).
 	"v1": {locution: "aif_locution_v1", illocution: "aif_illocution_v1", relation: "aif_relation_v1"},
-	// v2: 発話行為を L-node に anchor できる力だけに絞る。
+	// v2: limits illocutions to forces that can be anchored to an L-node.
 	"v2": {locution: "aif_locution_v1", illocution: "aif_illocution_v2", relation: "aif_relation_v2", restrictForces: true},
-	// v3: v2 に加えて、MA / CA の向きは対話の時間順で決まること、
-	// MA は質問と応答の間にも成り立つこと、言い換えの連鎖を落とさないことを伝える。
+	// v3: on top of v2, conveys that the MA / CA direction follows dialogue time order,
+	// that MA also holds between a question and its answer, and that rephrase chains must not be dropped.
 	"v3": {locution: "aif_locution_v1", illocution: "aif_illocution_v2", relation: "aif_relation_v3", restrictForces: true},
 
-	// ここから先は 1 世代 1 要因。効果を分離するため、同時に 2 つ変えない。
+	// From here on, one factor per generation. Never change two at once, so effects stay separable.
 	//
-	// v4 = v3 + H1: 近接バイアスの是正。
-	//   **この版のプロンプトに書いた距離分布は誤りである**（正規化前のグラフで測っていた）。
-	//   実測し直すと近接バイアスは存在せず、v3 の記述の方が正しかった。
-	//   本文を直すとハッシュが変わり実行結果を再現できなくなるので残すが、使わないこと。
+	// v4 = v3 + H1: correct proximity bias.
+	//   **The distance distribution written in this version's prompt is wrong** (it was measured on unnormalized graphs).
+	//   Re-measuring showed no proximity bias; v3's description was the correct one.
+	//   Fixing the text would change the hash and break reproduction of results, so it is kept, but do not use it.
 	"v4": {locution: "aif_locution_v1", illocution: "aif_illocution_v2", relation: "aif_relation_v4", restrictForces: true},
-	// v5 = v4 + H4: 関係ごとに確信度を申告させる。閾値は評価側で後から動かす。
+	// v5 = v4 + H4: ask for a confidence per relation. The threshold is moved later on the evaluation side.
 	"v5": {locution: "aif_locution_v1", illocution: "aif_illocution_v2", relation: "aif_relation_v5", scored: true, restrictForces: true},
-	// v6 = v5 + H2: 検証パス。出す係と削る係を別の呼び出しに分ける。
+	// v6 = v5 + H2: verification pass. Proposing and pruning are separate calls.
 	"v6": {locution: "aif_locution_v1", illocution: "aif_illocution_v2", relation: "aif_relation_v5", verify: "aif_verify_v1", scored: true, restrictForces: true},
-	// w1 = v3 + H3: 命題の過剰な正規化を抑える（関係層は v3 のまま）。
-	//   cos≥0.70 の閾値で baseline（発話のコピー）に負けていたことへの対処。
+	// w1 = v3 + H3: suppress over-normalization of propositions (the relation layer stays v3).
+	//   Addresses losing to the baseline (copying utterances) at the cos≥0.70 threshold.
 	"w1": {locution: "aif_locution_v1", illocution: "aif_illocution_v3", relation: "aif_relation_v3", restrictForces: true},
 
-	// adj = 関係抽出の基準線。stage 3 を使わず、隣り合う命題を全部 RA でつなぐ。
-	//   関係抽出にも「LLM 無しの下限」を置く。これを置いていなかったため、
-	//   「どの対がつながっているか」の判断で LLM が自明な規則に負けていることに
-	//   気づけていなかった（test n=124 の無向 F1: v3 0.458 対 adj 0.508。レポート §5.1）。
+	// adj = relation-extraction baseline. Skips stage 3 and links all adjacent propositions with RA.
+	//   Relation extraction also gets a "no LLM" lower bound. Without it, we had not noticed that
+	//   the LLM loses to a trivial rule at deciding which pairs are connected
+	//   (test n=124 undirected F1: v3 0.458 vs adj 0.508; report §5.1).
 	"adj": {locution: "aif_locution_v1", illocution: "aif_illocution_v3", adjacent: true, restrictForces: true},
-	// p1 = 候補対分類。生成をやめ、距離 4 以内の候補を 1 対ずつ判定させる。
-	//   命題層は w1（H3 採用）に合わせ、関係層の方式だけを w1 と比べられるようにする。
+	// p1 = candidate-pair classification. Instead of generating, judge candidates within distance 4 one pair at a time.
+	//   The proposition layer matches w1 (H3 adopted) so only the relation-layer method differs from w1.
 	"p1": {locution: "aif_locution_v1", illocution: "aif_illocution_v3", candidate: "aif_candidate_v1", restrictForces: true},
 
-	// g1 = v3 の関係プロンプト + 5 段階の依存度。命題層は w1（H3 採用）。
-	//   3 値の確信度は実測で high 49.5% / medium 49.1% / low 1.4% と実質 2 値に潰れ、
-	//   動作点が「全部（AP 0.300）」と「high のみ（AP 0.395・再現率半減）」の 2 つしか
-	//   取れなかった。high と medium の精度差は 2 倍近くあるので、
-	//   申告そのものには情報がある。刻みを 5 段階に増やし、
-	//   さらに「注釈者の確信」ではなく「dst が src にどれだけ依存しているか」を
-	//   操作的な判定手順つきで訊く。関係層の土台は v3（v4 の距離規則は誤りだった）。
+	// g1 = v3's relation prompt + 5-level dependence. The proposition layer is w1 (H3 adopted).
+	//   Measured 3-level confidence collapsed to effectively binary (high 49.5% / medium 49.1% / low 1.4%),
+	//   leaving only two operating points: "all (AP 0.300)" and "high only (AP 0.395, recall halved)".
+	//   Precision differs nearly 2x between high and medium, so
+	//   the self-report itself carries information. Increase the levels to 5,
+	//   and instead of "annotator confidence", ask "how much dst depends on src"
+	//   with an operational decision procedure. The relation layer builds on v3 (v4's distance rule was wrong).
 	"g1": {locution: "aif_locution_v1", illocution: "aif_illocution_v3", relation: "aif_relation_v7", graded: true, restrictForces: true},
-	// c1 = v3 の関係プロンプト + 3 値の確信度。命題層は w1。
-	//   g1 との唯一の違いは等級の訊き方（「関係がどれだけ不可欠か」vs
-	//   「注釈者は記録するか」）と段数。v5 は v4（誤った距離規則）の上に載っていたため、
-	//   3 値と 5 段階を同じ土台・同じ標本で比べた条件が無かった。それを埋める。
+	// c1 = v3's relation prompt + 3-level confidence. The proposition layer is w1.
+	//   The only differences from g1 are how the grade is asked ("how essential is the relation" vs
+	//   "would an annotator record it") and the number of levels. v5 sat on top of v4 (the wrong distance rule),
+	//   so no condition compared 3 levels and 5 levels on the same base and sample. This fills that gap.
 	"c1": {locution: "aif_locution_v1", illocution: "aif_illocution_v3", relation: "aif_relation_v8", scored: true, restrictForces: true},
 }
 
-// Result は 1 (ノードセット, 条件, 重み) の結果。JSONL で 1 行ずつ書き出す。
+// Result is the result for one (nodeset, condition, weight). Written one line at a time as JSONL.
 type Result struct {
 	NodesetID string `json:"nodeset_id"`
 	Condition string `json:"condition"`
 	PromptSet string `json:"prompt_set"`
-	// PromptVersions は使ったプロンプトの版と本文ハッシュ（再現性のため）。
+	// PromptVersions are the prompt versions used and their body hashes (for reproducibility).
 	PromptVersions map[string]string         `json:"prompt_versions,omitempty"`
 	Model          string                    `json:"model"`
 	Comparison     *evaluation.AIFComparison `json:"comparison"`
 	Usage          llm.Usage                 `json:"usage"`
-	// GoldNormalize / PredViolations は前処理と厳密性の記録。
+	// GoldNormalize / PredViolations record preprocessing and strictness.
 	GoldNormalize aif.NormalizeReport `json:"gold_normalize"`
-	// Dropped は検証パス（stage 4）が捨てた関係の本数。
+	// Dropped is the number of relations discarded by the verification pass (stage 4).
 	Dropped        int             `json:"dropped,omitempty"`
 	PredViolations []aif.Violation `json:"pred_violations,omitempty"`
 	Err            string          `json:"error,omitempty"`
@@ -228,12 +228,12 @@ func runExperiment(ctx context.Context, logger *slog.Logger, cfg *config, opts r
 			}
 			totalUsage = totalUsage.Add(b.Usage)
 			label := conditionLabel(cond, opts.PromptSet, opts.Model)
-			// 生成グラフは保存する。指標を後から変えても LLM を叩き直さずに
-			// 比較をやり直せるようにするため（生レスポンスを捨てないのと同じ理由）。
+			// Save the generated graph, so the comparison can be redone after changing metrics
+			// without calling the LLM again (the same reason raw responses are kept).
 			if err := saveGraph(opts.OutDir, d.NodesetID, label, b.Graph); err != nil {
 				return err
 			}
-			// 確信度つきで生成した条件は、閾値ごとの変種も同じ流れで評価する。
+			// For conditions generated with confidence, per-threshold variants are evaluated the same way.
 			for _, variant := range confidenceVariants(b.Graph) {
 				pred := variant.Graph
 				for _, mw := range crossProduct(opts.Metrics, weights) {
@@ -246,8 +246,8 @@ func runExperiment(ctx context.Context, logger *slog.Logger, cfg *config, opts r
 					if err != nil {
 						return err
 					}
-					// baseline は LLM を使わないのでプロンプト版にもモデルにも依存しない。
-					// 付けると同じ数値が版の数だけ別条件として並んでしまう。
+					// baseline does not use the LLM, so it depends on neither prompt version nor model.
+					// Tagging it would list the same numbers as separate conditions, once per version.
 					c.Condition = label + variant.Suffix
 					c.NodesetID = d.NodesetID
 					res := Result{
@@ -270,7 +270,7 @@ func runExperiment(ctx context.Context, logger *slog.Logger, cfg *config, opts r
 	return nil
 }
 
-// metricWeights は 指標の版 × 重み の組。
+// metricWeights is a (metric version × weight) pair.
 type metricWeights struct {
 	metric  string
 	weights evaluation.AIFWeights
@@ -286,12 +286,12 @@ func crossProduct(metrics []string, weights []evaluation.AIFWeights) []metricWei
 	return out
 }
 
-// conditionLabel は集計・検定で使う条件名。
+// conditionLabel is the condition name used in aggregation and tests.
 //
-// プロンプト版とモデルを名前に入れるのが要点。入れないと、同じ条件を別の
-// モデルで回した結果が同じ系列に混ざって平均されてしまう
-// （モデル差を測る実験ではそれが結論そのものになる）。
-// baseline は LLM を使わないので、版もモデルも付けない。
+// The key point is including the prompt version and model in the name. Otherwise results of the
+// same condition run with different models get mixed into one series and averaged
+// (in an experiment measuring model differences, that would be the conclusion itself).
+// baseline does not use the LLM, so it gets neither version nor model.
 func conditionLabel(cond, promptSet, model string) string {
 	if cond == condBaseline {
 		return cond
@@ -299,20 +299,20 @@ func conditionLabel(cond, promptSet, model string) string {
 	return cond + "@" + promptSet + "/" + modelTag(model)
 }
 
-// modelTag はモデル名を表側に出す短縮形。"gpt-5.6-terra" → "5.6-terra"。
-// 世代まで残すのは gpt-5-mini と gpt-5.6-mini を混同しないため。
+// modelTag is a short form of the model name for table rows. "gpt-5.6-terra" → "5.6-terra".
+// The generation is kept so gpt-5-mini and gpt-5.6-mini are not confused.
 func modelTag(model string) string {
 	return strings.TrimPrefix(model, "gpt-")
 }
 
-// saveGraph は生成した AIF グラフを out/graphs/ に書き出す。
-// 条件名（プロンプト版とモデルを含む）をそのままファイル名にする（"/" は "-" に置き換える）。
+// saveGraph writes the generated AIF graph to out/graphs/.
+// The condition name (including prompt version and model) is used as the file name ("/" replaced with "-").
 func saveGraph(outDir, nodesetID, label string, g aif.Graph) error {
 	name := fmt.Sprintf("%s_%s.json", nodesetID, strings.ReplaceAll(label, "/", "-"))
 	return writeJSON(filepath.Join(outDir, "graphs", name), g)
 }
 
-// build は条件に応じて生成側のグラフを作る。
+// build builds the generated graph according to the condition.
 func build(ctx context.Context, ann *aif.Annotator, cond string, d aif.Document, goldLocs []aif.LocutionInput) (built, error) {
 	switch cond {
 	case condBaseline:
@@ -336,28 +336,28 @@ func build(ctx context.Context, ann *aif.Annotator, cond string, d aif.Document,
 	return built{}, fmt.Errorf("aif-eval: 未知の条件 %q", cond)
 }
 
-// built は 1 条件分の生成結果。
+// built is the generation result for one condition.
 type built struct {
 	Graph      aif.Graph
 	Usage      llm.Usage
 	Rationales map[string]string
-	// Dropped は検証パス（stage 4）が捨てた関係の本数。
+	// Dropped is the number of relations discarded by the verification pass (stage 4).
 	Dropped int
 }
 
-// confidenceVariants は、等級つきで生成したグラフから「閾値ごとのグラフ」を作る。
+// confidenceVariants builds per-threshold graphs from a graph generated with grades.
 //
-// 生成のやり直しは要らない（等級は S-node に載っている）ので、
-// 1 回の LLM 呼び出しから P/R 曲線の各点が取れる。
-// 3 値の確信度なら 2 点、5 段階の依存度なら 4 点。
-// 等級を申告していないグラフでは変種を作らない（v3 以前と同じ 1 本だけ）。
+// No regeneration is needed (grades live on the S-nodes), so every point of the
+// P/R curve comes from a single LLM call:
+// 2 points for 3-level confidence, 4 points for 5-level dependence.
+// Graphs without self-reported grades get no variants (just the one graph, as in v3 and earlier).
 func confidenceVariants(g aif.Graph) []graphVariant {
 	out := []graphVariant{{"", g}}
 	ladder := g.GradeLadder()
 	if len(ladder) == 0 {
 		return out
 	}
-	// 梯子の上から i+1 段までを残す閾値を順に作る（全段を残す＝無フィルタは除く）。
+	// Build, in order, thresholds that keep the top i+1 rungs of the ladder (excluding keeping all rungs, i.e. no filter).
 	for i := 0; i < len(ladder)-1; i++ {
 		keep := ladder[:i+1]
 		var suffix string
@@ -371,16 +371,16 @@ func confidenceVariants(g aif.Graph) []graphVariant {
 	return out
 }
 
-// graphVariant は 1 つの閾値に対応する生成グラフ。
+// graphVariant is the generated graph for one threshold.
 type graphVariant struct {
 	Suffix string
 	Graph  aif.Graph
 }
 
-// locutionsOf はゴールドの L-node を LocutionInput に写す。
-// "話者 : 本文" 形になっているものは本文だけを取り出す。
+// locutionsOf maps the gold L-nodes to LocutionInput.
+// For text of the form "speaker : text", only the text part is taken.
 func locutionsOf(g aif.Graph) []aif.LocutionInput {
-	// L-node の並びは TA の連鎖で決まる（JSON の順序が時系列とは限らない）。
+	// L-node order is determined by the TA chain (JSON order is not necessarily chronological).
 	order := g.LocutionOrder()
 	out := make([]aif.LocutionInput, 0, len(order))
 	for _, n := range order {

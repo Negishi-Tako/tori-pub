@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Violation は AIF メタモデル違反 1 件。
+// Violation is a single AIF metamodel violation.
 type Violation struct {
 	NodeID string `json:"node_id,omitempty"`
 	Rule   string `json:"rule"`
@@ -20,22 +20,22 @@ func (v Violation) String() string {
 	return fmt.Sprintf("%s (node %s): %s", v.Rule, v.NodeID, v.Detail)
 }
 
-// Validate は AIF 中核オントロジー + IAT のメタモデル制約を検査する。
+// Validate checks the metamodel constraints of the AIF core ontology + IAT.
 //
-// 「厳密な AIF」を主張する以上、生成側のグラフはこの検査を通ることを条件にする。
-// 参照するのは以下の制約（Chesñevar et al. 2006 / Budzynska & Reed 2011 /
-// AIFdb のスキーマ）:
+// Since we claim "strict AIF", generated graphs are required to pass this check.
+// The constraints are as follows (Chesñevar et al. 2006 / Budzynska & Reed 2011 /
+// the AIFdb schema):
 //
-//	R1  I-node 同士を直接つながない（関係は必ず S-node を経由する）
-//	R2  RA は前提 I-node を 1 つ以上、結論 I-node をちょうど 1 つ持つ
-//	R3  CA は攻撃元をちょうど 1 つ、攻撃先をちょうど 1 つ持つ
-//	R4  MA は言い換え元・先をちょうど 1 つずつ持つ
-//	R5  YA は L か TA にちょうど 1 つ anchor され、I か S-node をちょうど 1 つ illocute する
-//	R6  TA は L から L への遷移である
-//	R7  L-node は L / TA / YA 以外へ直接つながない
-//	R8  YA のスキームは IAT の発話行為集合に含まれる
-//	R9  ノード種別は 7 種のいずれか、辺の両端が存在する
-//	R10 S-node は自己ループを作らない（前提と結論が同一 I-node でない）
+//	R1  I-nodes are never connected directly (relations always go through an S-node)
+//	R2  an RA has one or more premise I-nodes and exactly one conclusion I-node
+//	R3  a CA has exactly one attacker and exactly one target
+//	R4  an MA has exactly one source and exactly one target of the rephrase
+//	R5  a YA is anchored to exactly one L or TA and illocutes exactly one I or S-node
+//	R6  a TA is a transition from L to L
+//	R7  an L-node connects directly only to L / TA / YA
+//	R8  a YA's scheme is in the IAT set of illocutionary forces
+//	R9  node types are one of the 7 types, and both ends of every edge exist
+//	R10 S-nodes do not form self-loops (premise and conclusion are not the same I-node)
 func Validate(g Graph) []Violation {
 	ix := NewIndex(g)
 	var vs []Violation
@@ -146,8 +146,8 @@ func Validate(g Graph) []Violation {
 	return vs
 }
 
-// NormalizeReport は Normalize が落としたものの内訳。
-// 「前処理で何を捨てたか」を報告に書けるよう、握り潰さず返す。
+// NormalizeReport is a breakdown of what Normalize dropped.
+// It is returned rather than swallowed so the report can state what preprocessing discarded.
 type NormalizeReport struct {
 	DroppedEdges     int      `json:"dropped_edges"`
 	DroppedIsolatedL int      `json:"dropped_isolated_l"`
@@ -156,16 +156,16 @@ type NormalizeReport struct {
 	Violations       int      `json:"violations"`
 }
 
-// Normalize はゴールド／生成グラフを比較可能な形に整える。
+// Normalize puts gold / generated graphs into a comparable form.
 //
-// 落とすもの:
-//   - 端点が存在しない辺
-//   - AIF のメタモデルに無い形の辺（L→I の直結など。アノテーション由来のノイズ）
-//   - 孤立ノード（次数 0）。QT30 には収録ツール由来の「話者名: 直前の発話の複製」
-//     という辺を持たない L-node が大量に混ざっており、これを残すと L-node の
-//     個数だけで GED が動いてしまう。
+// Dropped:
+//   - edges whose endpoints do not exist
+//   - edges of shapes the AIF metamodel does not have (L→I directly, etc.; annotation noise)
+//   - isolated nodes (degree 0). QT30 contains many edgeless L-nodes from the recording tool,
+//     "speaker name: a copy of the previous utterance", and keeping them would let the
+//     L-node count alone move GED.
 //
-// 落とさないもの: 上記以外はすべて。内容の良し悪しでの間引きはしない。
+// Not dropped: everything else. Nothing is thinned out based on content quality.
 func Normalize(g Graph) (Graph, NormalizeReport) {
 	ix := NewIndex(g)
 	var rep NormalizeReport
@@ -206,7 +206,7 @@ func Normalize(g Graph) (Graph, NormalizeReport) {
 	return out, rep
 }
 
-// allowedEdge は AIF のメタモデルが許す (始点種別, 終点種別) の組か。
+// allowedEdge reports whether (source type, target type) is a pair the AIF metamodel allows.
 func allowedEdge(from, to NodeType) bool {
 	switch from {
 	case TypeI:

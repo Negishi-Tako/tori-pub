@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-// ErrCacheMiss はキャッシュに無かった場合。
+// ErrCacheMiss is returned when the entry is not in the cache.
 var ErrCacheMiss = errors.New("llm: cache miss")
 
-// CacheKey は Request から決定的なキーを作る。
+// CacheKey builds a deterministic key from a Request.
 //
-// 結果に影響する値だけを含める。Tag は含めない（保存先ディレクトリで分ける）。
-// スキーマ本文まで含めるのは、スキーマを変えたら出力も変わるため。
-// **ここを変えると既存のキャッシュがすべて外れ、報告した数値を再現できなくなる。**
+// Only values that affect the result are included. Tag is not included (it separates the storage directory).
+// The schema body is included because changing the schema changes the output.
+// **Changing this invalidates every existing cache entry, making reported numbers irreproducible.**
 func CacheKey(req Request) string {
 	type keyShape struct {
 		Model       string    `json:"model"`
@@ -44,10 +44,10 @@ func CacheKey(req Request) string {
 		k.SchemaJSON = string(req.Schema.JSON)
 		k.Strict = req.Schema.Strict
 	}
-	// encoding/json は struct フィールド順・map キー順を固定するので決定的。
+	// encoding/json fixes struct field order and map key order, so this is deterministic.
 	b, err := json.Marshal(k)
 	if err != nil {
-		// Message/float は必ず marshal できるため、ここに来るのは実装バグ。
+		// Message/float can always be marshaled, so reaching here is an implementation bug.
 		panic(fmt.Sprintf("llm: cache key marshal: %v", err))
 	}
 	sum := sha256.Sum256(b)
@@ -56,7 +56,7 @@ func CacheKey(req Request) string {
 
 var safeTag = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
-// FileCache はファイルシステム上の補完結果のキャッシュ。
+// FileCache is a filesystem cache of completion results.
 type FileCache struct {
 	dir string
 }
@@ -71,7 +71,7 @@ func (c *FileCache) path(tag, key string) string {
 	return filepath.Join(c.dir, t, key+".json")
 }
 
-// Get は保存済みの応答を返す。無ければ ErrCacheMiss。
+// Get returns the stored response, or ErrCacheMiss if there is none.
 func (c *FileCache) Get(tag, key string) (*Response, error) {
 	b, err := os.ReadFile(c.path(tag, key))
 	if err != nil {
@@ -95,8 +95,8 @@ func (c *FileCache) Put(tag, key string, resp *Response) error {
 	return writeFileAtomic(c.path(tag, key), b)
 }
 
-// writeFileAtomic は一時ファイル経由で path を置き換える。
-// 同時実行や中断で壊れた JSON をキャッシュに残さないため。
+// writeFileAtomic replaces path via a temporary file,
+// so concurrent runs or interruptions do not leave broken JSON in the cache.
 func writeFileAtomic(path string, b []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -120,7 +120,7 @@ func writeFileAtomic(path string, b []byte) error {
 	return nil
 }
 
-// CachingClient は Client のキャッシュ装飾。ヒットしたら inner を呼ばない。
+// CachingClient is a caching decorator for Client. On a hit, inner is not called.
 type CachingClient struct {
 	inner Client
 	cache *FileCache
@@ -139,7 +139,7 @@ func (c *CachingClient) Complete(ctx context.Context, req Request) (*Response, e
 	case err == nil:
 		hit := *cached
 		hit.Cached = true
-		// キャッシュヒットは課金されないので、コスト集計に混ぜない。
+		// Cache hits are not billed, so they are not mixed into cost totals.
 		hit.Usage.CostUSD = 0
 		return &hit, nil
 	case !errors.Is(err, ErrCacheMiss):

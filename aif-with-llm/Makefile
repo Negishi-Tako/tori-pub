@@ -2,7 +2,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 .PHONY: help
-help: ## このヘルプを表示
+help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: check
@@ -12,25 +12,25 @@ check: ## fmt → vet → test
 	go test ./...
 
 .PHONY: aif-fetch
-aif-fetch: ## AIFdb からゴールドと素テキストを取得（例: ARGS="-corpus qt30 -subcorpora 6"）
+aif-fetch: ## Fetch gold annotations and raw text from AIFdb (e.g. ARGS="-corpus qt30 -subcorpora 6")
 	go run ./cmd/aif-eval -fetch $(ARGS)
 
 .PHONY: aif-run
-aif-run: ## 抽出と評価を実行（例: ARGS="-split test -sample 124 -prompt-set v3"）
+aif-run: ## Run extraction and evaluation (e.g. ARGS="-split test -sample 124 -prompt-set v3")
 	go run ./cmd/aif-eval -run $(ARGS)
 
 .PHONY: aif-report
-aif-report: ## 集計・検定・証拠を書き出す（例: ARGS="-out out/aif"）
+aif-report: ## Write aggregates, tests and evidence (e.g. ARGS="-out out/aif")
 	go run ./cmd/aif-eval -report $(ARGS)
 
 .PHONY: aif-goldcheck
-aif-goldcheck: ## ゴールド自体の AIF メタモデル適合を数える
+aif-goldcheck: ## Count AIF metamodel conformance of the gold data itself
 	go run ./cmd/aif-eval -goldcheck $(ARGS)
 
 .PHONY: paper-stats
-paper-stats: ## 論文の検定（5 比較・Holm 補正）を data/metrics/ の集計値から再現する
+paper-stats: ## Reproduce the paper's tests (5 comparisons, Holm correction) from the aggregates in data/metrics/
 	go run ./cmd/aif-eval -paperstats
 
 .PHONY: figures
-figures: ## レポートの図を再生成（out/aif-n124-*/ の生出力が必要。Python + matplotlib）
+figures: ## Regenerate the report figures (needs raw output in out/aif-n124-*/; Python + matplotlib)
 	python3 scripts/make_report_figs.py

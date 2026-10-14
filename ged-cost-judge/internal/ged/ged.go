@@ -1,15 +1,15 @@
-// Package ged は命題グラフ（I-node と RA/CA/MA を畳んだ辺）の GED を、
-// 学習できる 11 個のコスト（計画 §6.2）で計算する。
+// Package ged computes the GED of proposition graphs (I-nodes and edges folded from RA/CA/MA)
+// with 11 learnable costs (plan §6.2).
 //
-// 前実験の aif-ged/0.4 の命題 GED と同じ手順（Hungarian 法で命題を対応付け、
-// 辺はその対応から完全一致 → 種別違い → 向き違いの順に照合）を取り、次の 3 点を一般化した。
+// It follows the same procedure as the previous experiment's aif-ged/0.4 proposition GED (match propositions with
+// the Hungarian method, then match edges from that matching as exact → type mismatch → direction mismatch), generalizing 3 points:
 //
-//   - 欠落（参照側にだけある）と余分（変種側にだけある）のコストを分ける
-//   - 種別違いのコストを種別の組（RA↔CA / RA↔MA / CA↔MA）ごとに分ける
-//   - 置換コストを cos の折れ線（節点 1, 0.9, 0.7, 0.5, 0.3）にする
+//   - separate costs for missing (only on the reference side) and extra (only on the variant side)
+//   - separate type-mismatch costs per type pair (RA↔CA / RA↔MA / CA↔MA)
+//   - substitution cost as a piecewise-linear function of cos (knots 1, 0.9, 0.7, 0.5, 0.3)
 //
-// 命題の対応を固定すると GED は θ について線形になる（GED = θ·φ + 辺の余分の本数）。
-// Compute はその特徴 φ を返す。
+// With the proposition matching fixed, GED is linear in θ (GED = θ·φ + number of extra edges).
+// Compute returns those features φ.
 package ged
 
 import (
@@ -20,77 +20,77 @@ import (
 	"strings"
 )
 
-// 関係の種別。
+// Relation types.
 const (
-	RA = "RA" // 支持
-	CA = "CA" // 攻撃
-	MA = "MA" // 言い換え
+	RA = "RA" // support
+	CA = "CA" // attack
+	MA = "MA" // rephrase
 )
 
-// Kinds は関係の種別の一覧。
+// Kinds lists the relation types.
 var Kinds = []string{RA, CA, MA}
 
-// Prop は命題（I-node）。
+// Prop is a proposition (I-node).
 type Prop struct {
 	ID   string `json:"id"`
 	Text string `json:"text,omitempty"`
 }
 
-// Edge は前提 From から結論 To への関係。
+// Edge is a relation from premise From to conclusion To.
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 	Kind string `json:"kind"`
 }
 
-// Graph は命題グラフ。
+// Graph is a proposition graph.
 type Graph struct {
 	Props []Prop `json:"props"`
 	Edges []Edge `json:"edges"`
 }
 
-// Clone は深いコピーを返す。
+// Clone returns a deep copy.
 func (g Graph) Clone() Graph {
 	return Graph{Props: slices.Clone(g.Props), Edges: slices.Clone(g.Edges)}
 }
 
-// パラメータの添字（計画 §6.2 の # から 1 を引いたもの）。
+// Parameter indices (the # in plan §6.2 minus 1).
 const (
-	PNodeMissing = iota // I-node の欠落（参照側にだけある命題。GED では挿入）
-	PNodeExtra          // I-node の余分（変種側にだけある命題。GED では削除）
-	PSub09              // 置換関数の増分 cos 1 → 0.9
-	PSub07              // 同 0.9 → 0.7
-	PSub05              // 同 0.7 → 0.5
-	PSub03              // 同 0.5 → 0.3（cos < 0.3 は一定）
-	PEdgeMissing        // 辺の欠落
-	PTypeRACA           // 種別違い RA↔CA
-	PTypeRAMA           // 種別違い RA↔MA
-	PTypeCAMA           // 種別違い CA↔MA
-	PDirection          // 向き違い
+	PNodeMissing = iota // missing I-node (proposition only on the reference side; an insertion in GED)
+	PNodeExtra          // extra I-node (proposition only on the variant side; a deletion in GED)
+	PSub09              // substitution function increment, cos 1 → 0.9
+	PSub07              // likewise 0.9 → 0.7
+	PSub05              // likewise 0.7 → 0.5
+	PSub03              // likewise 0.5 → 0.3 (constant for cos < 0.3)
+	PEdgeMissing        // missing edge
+	PTypeRACA           // type mismatch RA↔CA
+	PTypeRAMA           // type mismatch RA↔MA
+	PTypeCAMA           // type mismatch CA↔MA
+	PDirection          // direction mismatch
 	NumParams
 )
 
-// ParamNames は表に出す名前。
+// ParamNames are the names shown in tables.
 var ParamNames = [NumParams]string{
 	"I 欠落", "I 余分", "置換 cos0.9", "置換 cos0.7", "置換 cos0.5", "置換 cos0.3",
 	"辺の欠落", "種別 RA↔CA", "種別 RA↔MA", "種別 CA↔MA", "向き違い",
 }
 
-// EdgeExtraCost は辺の余分のコスト。β と θ の尺度を分けられないので 1 に固定する（尺度の基準）。
+// EdgeExtraCost is the cost of an extra edge. β and θ scales cannot be separated, so it is fixed at 1 (the scale reference).
 const EdgeExtraCost = 1.0
 
-// Knots は置換関数の節点（cos）。
+// Knots are the knots (cos) of the substitution function.
 var Knots = [5]float64{1, 0.9, 0.7, 0.5, 0.3}
 
-// Theta は 11 個のコスト。
+// Theta is the 11 costs.
 type Theta [NumParams]float64
 
-// Current は現行のコスト表（aif-ged/0.4 の命題グラフ）。置換は 1 − cos の折れ線。
+// Current is the current cost table (aif-ged/0.4 proposition graph). Substitution is piecewise-linear 1 − cos.
 func Current() Theta {
 	return Theta{1, 1, 0.1, 0.2, 0.2, 0.2, 1, 0.75, 0.75, 0.75, 1}
 }
 
-// SubBasis は置換関数の基底 h_k(cos)。f(cos) = Σ θ_k h_k(cos)。
+// SubBasis is the basis h_k(cos) of the substitution function. f(cos) = Σ θ_k h_k(cos).
 func SubBasis(cos float64) [4]float64 {
 	var h [4]float64
 	for k := range 4 {
@@ -100,21 +100,21 @@ func SubBasis(cos float64) [4]float64 {
 	return h
 }
 
-// Sub は cos に対する置換コスト。
+// Sub is the substitution cost for cos.
 func (t Theta) Sub(cos float64) float64 {
 	h := SubBasis(cos)
 	return t[PSub09]*h[0] + t[PSub07]*h[1] + t[PSub05]*h[2] + t[PSub03]*h[3]
 }
 
-// Features は対応を固定したときの線形化。GED = Phi·θ + EdgeExtra·EdgeExtraCost。
+// Features is the linearization with the matching fixed. GED = Phi·θ + EdgeExtra·EdgeExtraCost.
 type Features struct {
 	Phi       [NumParams]float64
 	EdgeExtra float64
-	// Assign は変種側の命題 i → 参照側の命題の添字（対応しなければ -1）。収束判定に使う。
+	// Assign maps variant proposition i → reference proposition index (-1 if unmatched). Used for convergence checks.
 	Assign []int
 }
 
-// Cost は θ での GED。
+// Cost is the GED at θ.
 func (f Features) Cost(t Theta) float64 {
 	c := f.EdgeExtra * EdgeExtraCost
 	for i := range NumParams {
@@ -123,7 +123,7 @@ func (f Features) Cost(t Theta) float64 {
 	return c
 }
 
-// Signature は対応の識別子。
+// Signature identifies the matching.
 func (f Features) Signature() string {
 	var b strings.Builder
 	for _, j := range f.Assign {
@@ -133,7 +133,7 @@ func (f Features) Signature() string {
 	return b.String()
 }
 
-// Sim は参照側の命題 refID と変種側の命題 varID の cos を返す。
+// Sim returns the cos between reference proposition refID and variant proposition varID.
 type Sim func(refID, varID string) float64
 
 func typePair(a, b string) int {
@@ -151,7 +151,7 @@ func typePair(a, b string) int {
 	return -1
 }
 
-// Compute は θ で命題を最適に対応付け、そのときの特徴を返す。ref は参照（元の議論 S）、v は変種。
+// Compute optimally matches propositions at θ and returns the resulting features. ref is the reference (source argument S); v is the variant.
 func Compute(ref, v Graph, sim Sim, t Theta) (Features, error) {
 	n, m := len(v.Props), len(ref.Props)
 	sub := make([][]float64, n)
@@ -201,7 +201,7 @@ func Compute(ref, v Graph, sim Sim, t Theta) (Features, error) {
 		}
 	}
 
-	// 辺: 完全一致 → 種別違い → 向き違いの順に、パスごとに全件を照合する。
+	// Edges: match every edge per pass in the order exact → type mismatch → direction mismatch.
 	refUsed := make([]bool, len(ref.Edges))
 	type mapped struct {
 		from, to, kind string

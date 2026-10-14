@@ -9,9 +9,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// RetryConfig は再試行の設定。
+// RetryConfig configures retries.
 type RetryConfig struct {
-	// MaxAttempts は初回を含む試行回数。1 なら再試行しない。
+	// MaxAttempts is the number of attempts including the first. 1 means no retries.
 	MaxAttempts int
 	BaseBackoff time.Duration
 	MaxBackoff  time.Duration
@@ -21,9 +21,9 @@ func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{MaxAttempts: 4, BaseBackoff: time.Second, MaxBackoff: 30 * time.Second}
 }
 
-// ThrottledClient はレート制御と再試行を足す装飾。
+// ThrottledClient is a decorator adding rate control and retries.
 //
-// 並行に呼んでも、API へのレートはこの limiter 1 つで一元管理される。
+// Even with concurrent calls, the API rate is managed centrally by this single limiter.
 type ThrottledClient struct {
 	inner   Client
 	limiter *rate.Limiter
@@ -32,8 +32,8 @@ type ThrottledClient struct {
 
 var _ Client = (*ThrottledClient)(nil)
 
-// NewThrottledClient は rps（1 秒あたり要求数）と burst で制限をかける。
-// rps <= 0 なら制限なし。
+// NewThrottledClient limits to rps (requests per second) with burst.
+// rps <= 0 means no limit.
 func NewThrottledClient(inner Client, rps float64, burst int, retry RetryConfig) *ThrottledClient {
 	var limiter *rate.Limiter
 	if rps > 0 {
@@ -71,13 +71,13 @@ func (c *ThrottledClient) Complete(ctx context.Context, req Request) (*Response,
 	return nil, lastErr
 }
 
-// sleepBackoff は指数バックオフ + ジッタで待つ。
+// sleepBackoff waits with exponential backoff + jitter.
 func sleepBackoff(ctx context.Context, cfg RetryConfig, attempt int) error {
 	backoff := cfg.BaseBackoff << attempt
 	if backoff > cfg.MaxBackoff || backoff <= 0 {
 		backoff = cfg.MaxBackoff
 	}
-	// 同時に落ちた goroutine が一斉に再試行しないよう 50〜100% の範囲で散らす。
+	// Spread over 50–100% so goroutines that failed together do not all retry at once.
 	jittered := time.Duration(float64(backoff) * (0.5 + 0.5*rand.Float64()))
 	timer := time.NewTimer(jittered)
 	defer timer.Stop()

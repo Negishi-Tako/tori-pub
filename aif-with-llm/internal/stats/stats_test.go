@@ -12,7 +12,7 @@ func TestDescribe(t *testing.T) {
 	if s.N != 8 || s.Mean != 5 {
 		t.Errorf("mean = %f, n = %d; want 5, 8", s.Mean, s.N)
 	}
-	// 標本標準偏差（n-1）で 2.138…
+	// Sample standard deviation (n-1) is 2.138…
 	if math.Abs(s.SD-2.1381) > 1e-3 {
 		t.Errorf("sd = %f, want ~2.138", s.SD)
 	}
@@ -25,14 +25,14 @@ func TestDescribe(t *testing.T) {
 }
 
 func TestCliffsDelta(t *testing.T) {
-	// 完全に上回る場合は 1、下回る場合は -1。
+	// 1 if a is entirely above, -1 if entirely below.
 	if d := stats.CliffsDelta([]float64{4, 5, 6}, []float64{1, 2, 3}); d != 1 {
 		t.Errorf("delta = %f, want 1", d)
 	}
 	if d := stats.CliffsDelta([]float64{1, 2, 3}, []float64{4, 5, 6}); d != -1 {
 		t.Errorf("delta = %f, want -1", d)
 	}
-	// 同じ分布なら 0 付近。
+	// Near 0 for the same distribution.
 	if d := stats.CliffsDelta([]float64{1, 2, 3}, []float64{1, 2, 3}); d != 0 {
 		t.Errorf("delta = %f, want 0", d)
 	}
@@ -45,7 +45,7 @@ func TestCliffsDelta(t *testing.T) {
 }
 
 func TestWilcoxonSignedRank(t *testing.T) {
-	// 全ての対で同じ向きに差がある → 有意になるはず。
+	// Every pair differs in the same direction → should be significant.
 	diffs := make([]float64, 20)
 	for i := range diffs {
 		diffs[i] = 0.5 + float64(i)*0.01
@@ -53,12 +53,12 @@ func TestWilcoxonSignedRank(t *testing.T) {
 	if p := stats.WilcoxonSignedRank(diffs); p > 0.001 {
 		t.Errorf("p = %f, want a very small value for a consistent difference", p)
 	}
-	// 差が無ければ有意にならない。
+	// No difference should not be significant.
 	zero := make([]float64, 20)
 	if p := stats.WilcoxonSignedRank(zero); p != 1 {
 		t.Errorf("p = %f, want 1 when every difference is zero", p)
 	}
-	// 向きがばらついていれば有意にならない。
+	// Mixed directions should not be significant.
 	mixed := []float64{1, -1, 2, -2, 3, -3, 1.5, -1.5}
 	if p := stats.WilcoxonSignedRank(mixed); p < 0.5 {
 		t.Errorf("p = %f, want a large value for symmetric differences", p)
@@ -81,18 +81,18 @@ func TestBootstrapCIIsDeterministic(t *testing.T) {
 func TestHolmAdjust(t *testing.T) {
 	p := []float64{0.01, 0.02, 0.03, 0.04}
 	adj := stats.HolmAdjust(p)
-	// 最小の p は n 倍される。
+	// The smallest p is multiplied by n.
 	if math.Abs(adj[0]-0.04) > 1e-9 {
 		t.Errorf("adjusted[0] = %f, want 0.04", adj[0])
 	}
-	// 補正後は単調非減少。
+	// Adjusted values are monotonically non-decreasing.
 	for i := 1; i < len(adj); i++ {
 		if adj[i] < adj[i-1] {
 			t.Errorf("holm output is not monotonic: %v", adj)
 			break
 		}
 	}
-	// 1 を超えない。
+	// Never exceeds 1.
 	for _, v := range stats.HolmAdjust([]float64{0.5, 0.6, 0.9}) {
 		if v > 1 {
 			t.Errorf("adjusted p exceeds 1: %f", v)

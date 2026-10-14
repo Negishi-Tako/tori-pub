@@ -1,25 +1,25 @@
 .env
 
-# LLM / 埋め込みのキャッシュ（API レスポンスの生データ。再現は fetch + run でやる）
+# LLM / embedding cache (raw API responses; reproduce with fetch + run)
 .cache/
 
-# AIFdb から取得したコーパス本文。
-# QT30 の再配布条件が明示されていないため、このリポジトリには含めない。
-# `make aif-fetch` で各自が取得する（§README「データの扱い」）。
+# Corpus text fetched from AIFdb.
+# QT30's redistribution terms are not stated explicitly, so it is not included in this repository.
+# Fetch it yourself with `make aif-fetch` (see "Data handling" in the README).
 data/aifdb/
 
-# 実験の生出力。生成グラフと evidence にはコーパス本文が含まれるので公開しない。
-# 集計値（本文を含まない）は data/metrics/ に置く。
+# Raw experiment output. Generated graphs and evidence contain corpus text, so they are not published.
+# Aggregated values (without corpus text) live in data/metrics/.
 out/
 
-# 実験の生出力を out/ 以外に置いた場合（例: aif-test-*）も同じ理由で公開しない。
+# Raw experiment output placed outside out/ (e.g. aif-test-*) is not published for the same reason.
 aif-test-*/
 
-# 論文の図 2（生成グラフの例）は QT30 の発話をそのまま含むので公開しない。
-# scripts/make_paper_figs.py が out/ の生出力から各自の手元で生成する。
+# Figure 2 of the paper (an example generated graph) contains QT30 utterances verbatim, so it is not published.
+# scripts/make_paper_figs.py generates it locally from the raw output in out/.
 docs/figures/*
 
-# ビルド生成物。と原稿もここで除外される。
+# Build artifacts. Manuscripts are also excluded here.
 *.pptx
 *.pdf
 *.docx
@@ -28,7 +28,7 @@ __pycache__/
 .venv/
 venv/
 
-# OS / エディタ
+# OS / editor
 .DS_Store
 .idea/
 .vscode/

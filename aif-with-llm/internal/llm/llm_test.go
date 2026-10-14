@@ -30,8 +30,8 @@ func TestSchemaForIsStrict(t *testing.T) {
 	if err := json.Unmarshal(schema.JSON, &m); err != nil {
 		t.Fatalf("schema is not valid json: %v", err)
 	}
-	// OpenAI の strict モードは additionalProperties:false と
-	// 全プロパティの required を要求する。ここが崩れると API が 400 を返す。
+	// OpenAI's strict mode requires additionalProperties:false and
+	// every property in required. If this breaks, the API returns 400.
 	if m["additionalProperties"] != false {
 		t.Errorf("additionalProperties = %v, want false", m["additionalProperties"])
 	}
@@ -42,11 +42,11 @@ func TestSchemaForIsStrict(t *testing.T) {
 	if len(required) != 4 {
 		t.Errorf("required = %v, want all 4 properties", required)
 	}
-	// $schema はサーバ側で嫌われるので落としてあること。
+	// $schema is disliked by the server, so it must have been dropped.
 	if _, ok := m["$schema"]; ok {
 		t.Error("$schema should be removed")
 	}
-	// 入れ子の object も同様に整形されていること。
+	// Nested objects must be shaped the same way.
 	props := m["properties"].(map[string]any)
 	nested := props["nested"].(map[string]any)
 	if nested["additionalProperties"] != false {
@@ -55,7 +55,7 @@ func TestSchemaForIsStrict(t *testing.T) {
 }
 
 func TestSchemaForIsDeterministic(t *testing.T) {
-	// スキーマが揺れるとキャッシュキーが変わり、無駄に課金される。
+	// If the schema wobbles, the cache key changes and we are billed needlessly.
 	a, err := llm.SchemaFor[sampleOut]("sample", "テスト用")
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestCacheKeyDependsOnRequest(t *testing.T) {
 	key := llm.CacheKey(base)
 
 	same := base
-	same.Tag = "別のタグ" // Tag は結果に影響しないのでキーを変えない
+	same.Tag = "別のタグ" // Tag does not affect the result, so it must not change the key
 	if llm.CacheKey(same) != key {
 		t.Error("Tag should not affect the cache key")
 	}
@@ -152,16 +152,16 @@ func TestPricingChatCost(t *testing.T) {
 	if want := 2.25; cost != want {
 		t.Errorf("ChatCost = %f, want %f", cost, want)
 	}
-	// 日付サフィックス付きのモデル名でも前方一致で単価が引けること。
+	// Prices must be found by prefix match even for model names with a date suffix.
 	if got := p.ChatCost("gpt-5-mini-2026-01-01", llm.Usage{OutputTokens: 1_000_000}); got != 2.0 {
 		t.Errorf("dated model cost = %f, want 2.0", got)
 	}
-	// キャッシュヒット分は安い単価で計算されること。
+	// Cache hits must be computed at the cheaper rate.
 	cached := p.ChatCost("gpt-5-mini", llm.Usage{InputTokens: 1_000_000, CachedInputTokens: 1_000_000})
 	if cached != 0.025 {
 		t.Errorf("cached input cost = %f, want 0.025", cached)
 	}
-	// 未知モデルは 0 を返すこと。
+	// Unknown models must return 0.
 	if got := p.ChatCost("mystery-model", llm.Usage{InputTokens: 100}); got != 0 {
 		t.Errorf("unknown model cost = %f, want 0", got)
 	}

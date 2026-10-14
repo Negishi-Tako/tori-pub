@@ -1,10 +1,10 @@
 package aif
 
-// LLM の Structured Outputs で使う型。
-// OpenAI の strict モードの制約に従う（strict モードでは全フィールドが required に
-// なるので、省略可能なフィールドを作らず「無ければ空文字」で表す）。
+// Types used for LLM Structured Outputs.
+// They follow the constraints of OpenAI's strict mode (in strict mode every field is required,
+// so there are no optional fields; absence is represented by the empty string).
 
-// LocutionResult は L-node 分割（stage 1）の出力。
+// LocutionResult is the output of L-node segmentation (stage 1).
 type LocutionResult struct {
 	Locutions []LocutionItem `json:"locutions" jsonschema_description:"Ordered locutions (AIF L-nodes) extracted from the transcript"`
 }
@@ -14,7 +14,7 @@ type LocutionItem struct {
 	Text    string `json:"text" jsonschema_description:"The locution text, taken verbatim from the transcript"`
 }
 
-// IllocutionResult は YA + I-node（stage 2）の出力。
+// IllocutionResult is the output of YA + I-node (stage 2).
 type IllocutionResult struct {
 	Items []IllocutionItem `json:"items" jsonschema_description:"One entry per input locution, in the same order"`
 }
@@ -25,9 +25,9 @@ type IllocutionItem struct {
 	Proposition string `json:"proposition" jsonschema_description:"Propositional content as a standalone declarative sentence (the I-node). Empty string if the locution has no propositional content"`
 }
 
-// IllocutionResultAnchored は stage 2 のうち、L-node に anchor される YA だけに
-// 発話行為を絞った版（aif_illocution_v2）。Arguing / Restating / Analysing を
-// 選択肢から外すことで、遷移に anchor されるべき力を発話に付けさせない。
+// IllocutionResultAnchored is the stage 2 variant that limits illocutions to YAs anchored
+// to L-nodes (aif_illocution_v2). Removing Arguing / Restating / Analysing from the choices
+// prevents forces that should be anchored to transitions from being attached to utterances.
 type IllocutionResultAnchored struct {
 	Items []IllocutionItemAnchored `json:"items" jsonschema_description:"One entry per input locution, in the same order"`
 }
@@ -38,7 +38,7 @@ type IllocutionItemAnchored struct {
 	Proposition string `json:"proposition" jsonschema_description:"Propositional content as a standalone declarative sentence (the I-node). Empty string if the locution has no propositional content"`
 }
 
-// RelationResult は RA/CA/MA（stage 3）の出力。
+// RelationResult is the output of RA/CA/MA (stage 3).
 type RelationResult struct {
 	Relations []RelationItem `json:"relations" jsonschema_description:"Argumentative relations between propositions. Empty list if there are none"`
 }
@@ -51,15 +51,15 @@ type RelationItem struct {
 	Rationale string `json:"rationale" jsonschema_description:"One short sentence justifying the relation and its direction"`
 }
 
-// RelationResultScored は stage 3 の出力に確信度を足した版（aif_relation_v5 以降）。
+// RelationResultScored is the stage 3 output with confidence added (aif_relation_v5 and later).
 //
-// 別の型にしてあるのは、v3 以前のスキーマを 1 バイトも変えないため。
-// Structured Outputs の strict モードでは全フィールドが required になるので、
-// 既存の RelationItem に足すと過去の条件まで別物になってしまう。
+// It is a separate type so the v3-and-earlier schema does not change by a single byte.
+// In Structured Outputs strict mode every field is required, so adding a field to the
+// existing RelationItem would change past conditions too.
 //
-// 確信度を数値ではなく 3 値にしてあるのは、LLM の自己申告する小数が
-// 0.8 / 0.9 付近に固まって閾値として機能しないため。3 値なら
-// 「high のみ」「high+medium」「全部」の 3 点で P/R 曲線が引ける。
+// Confidence is 3-level rather than numeric because the decimals an LLM self-reports
+// cluster around 0.8 / 0.9 and do not work as thresholds. With 3 levels, a P/R curve
+// can be drawn from 3 points: "high only", "high+medium" and "all".
 type RelationResultScored struct {
 	Relations []RelationItemScored `json:"relations" jsonschema_description:"Argumentative relations between propositions. Empty list if there are none"`
 }
@@ -73,11 +73,11 @@ type RelationItemScored struct {
 	Confidence string `json:"confidence" jsonschema:"enum=high,enum=medium,enum=low" jsonschema_description:"How certain you are that this relation holds AND that its type and direction are right. high = an annotator following the guidelines would certainly record it; low = you would not be surprised if it were not annotated"`
 }
 
-// VerifyResult は検証パス（stage 4）の出力。
+// VerifyResult is the output of the verification pass (stage 4).
 //
-// 生成した関係を 1 本ずつ見直して残すか捨てるかを決めさせる。
-// 一括生成では「出しすぎ」を自分で抑えられないことが実測で分かっている
-// （過剰生成が当たりの本数を上回る）ため、別の呼び出しで削る係を置く。
+// It reviews generated relations one at a time and decides whether to keep or discard each.
+// Measurements show bulk generation cannot curb its own over-generation
+// (over-generation exceeds the number of hits), so a separate call acts as the pruner.
 type VerifyResult struct {
 	Items []VerifyItem `json:"items" jsonschema_description:"One entry per candidate relation, in the same order as the input"`
 }
@@ -88,12 +88,12 @@ type VerifyItem struct {
 	Reason   string `json:"reason" jsonschema_description:"One short sentence for the decision"`
 }
 
-// CandidateResult は候補対分類（stage 3 の別方式）の出力。
+// CandidateResult is the output of candidate-pair classification (an alternative stage 3).
 //
-// 「関係のリストを出せ」という生成ではなく、「この対は関係があるか」を
-// 候補ごとに判定させる。生成方式では、どの対を選ぶかの判断が
-// 「隣接する命題を全部つなぐ」という自明な規則にすら負けていた
-// （test n=124 の無向 F1: 0.458 対 0.508）ため、選択を自由生成に任せるのをやめる。
+// Instead of generating "a list of relations", the LLM judges "does this pair hold a relation"
+// for each candidate. With generation, the choice of which pairs to link lost even to the
+// trivial rule "link all adjacent propositions" (test n=124 undirected F1: 0.458 vs 0.508),
+// so selection is no longer left to free generation.
 type CandidateResult struct {
 	Items []CandidateItem `json:"items" jsonschema_description:"One verdict per candidate pair, in the same order as the input"`
 }
@@ -106,20 +106,20 @@ type CandidateItem struct {
 	Rationale  string `json:"rationale" jsonschema_description:"One short sentence for the verdict. Empty string when relation is none"`
 }
 
-// RelationResultGraded は stage 3 の出力に「依存度」を 5 段階で付けた版
-// （aif_relation_v7 以降）。
+// RelationResultGraded is the stage 3 output with a 5-level "dependence" grade
+// (aif_relation_v7 and later).
 //
-// 3 値の確信度（RelationResultScored）は実測で**実質 2 値に潰れた**:
-// high 49.5% / medium 49.1% / low 1.4%。動作点が「全部」と「high のみ」の
-// 2 つしか取れず、後者は再現率が半減する。
-// 一方 high の精度 0.395 と medium+low の 0.207 には 2 倍近い差があり、
-// 自己申告そのものは情報を持っている。刻みが粗いことが問題だった。
+// The 3-level confidence (RelationResultScored) **collapsed to effectively binary** in practice:
+// high 49.5% / medium 49.1% / low 1.4%. Only two operating points were available, "all" and
+// "high only", and the latter halves recall.
+// Meanwhile precision differs nearly 2x between high (0.395) and medium+low (0.207), so
+// the self-report itself carries information. The coarse granularity was the problem.
 //
-// 直し方を 2 点変えている:
-//   - 3 段階 → 5 段階にして動作点を増やす。
-//   - 「アノテータは記録するか」（＝注釈者の確信）ではなく
-//     「dst が src にどれだけ依存しているか」（＝関係そのものの性質）を訊く。
-//     前者は中央に寄せる動機を与えるが、後者には操作的な判定手順を書ける。
+// Two things are changed:
+//   - 3 levels → 5 levels for more operating points.
+//   - Instead of "would an annotator record it" (= annotator confidence), ask
+//     "how much does dst depend on src" (= a property of the relation itself).
+//     The former invites drifting to the middle; the latter admits an operational decision procedure.
 type RelationResultGraded struct {
 	Relations []RelationItemGraded `json:"relations" jsonschema_description:"Argumentative relations between propositions. Empty list if there are none"`
 }
@@ -130,9 +130,9 @@ type RelationItemGraded struct {
 	Type      string `json:"type" jsonschema:"enum=RA,enum=CA,enum=MA" jsonschema_description:"AIF S-node type"`
 	Force     string `json:"illocutionary_force" jsonschema:"enum=Arguing,enum=Disagreeing,enum=Challenging,enum=Restating,enum=Analysing,enum=Default Illocuting" jsonschema_description:"Illocutionary force anchoring this relation in the dialogue (the YA-node scheme)"`
 	Rationale string `json:"rationale" jsonschema_description:"One short sentence justifying the relation and its direction"`
-	// Dependency は 5 段階の依存度。5 が最も強い。1 は「関係ではない」なので出力しない。
+	// Dependency is the 5-level dependence; 5 is strongest. 1 means "not a relation", so it is not output.
 	Dependency string `json:"dependency" jsonschema:"enum=5,enum=4,enum=3,enum=2" jsonschema_description:"How strongly the target depends on the source, on the 5-point scale defined in the instructions. 5 is strongest. Do not emit relations you would grade 1"`
-	// Test は依存度を決めるために当てた判定手順の結果。等級の根拠を残す
-	// （等級だけ見ても、なぜその等級なのかが後から検証できないため）。
+	// Test is the result of the decision procedure applied to determine the dependence. It records the grade's basis
+	// (the grade alone cannot later be checked for why it was given).
 	Test string `json:"test" jsonschema_description:"Which of the tests in the instructions you applied, and its outcome, in at most ten words"`
 }

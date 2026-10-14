@@ -16,32 +16,32 @@ import (
 	"time"
 )
 
-// AIFdb corpora（https://corpora.aifdb.org/）から取得するクライアント。
+// Client for fetching from AIFdb corpora (https://corpora.aifdb.org/).
 //
-// 相手は研究用の公開サービスなので、並列度 1・リクエスト間に間隔を空ける。まとめ取りは 1 サブコーパス =
-// 1 アーカイブ（tar.gz）で済ませ、ノードセットを 1 件ずつ叩かない。
+// The server is a public research service, so use concurrency 1 and space out requests. Bulk fetching uses
+// one archive (tar.gz) per subcorpus instead of hitting nodesets one by one.
 //
-// ただしアーカイブが壊れていることがある（2026-10 時点では、ノードセットの JSON が 0 バイトで、
-// 素テキストもノードセット単位ではなくエピソード単位の 1 本しか入っていない）。そのときだけ、
-// 壊れた JSON を 1 件ずつ AIFdb 本体（www.aifdb.org/json/<id>）から取り直し、
-// 素テキストはエピソードの書き起こしから切り出す（ExcerptTranscript）。
+// However, archives are sometimes broken (as of 2026-10, nodeset JSON files are 0 bytes and the
+// raw text is a single per-episode file rather than per-nodeset). Only then is each broken
+// JSON refetched from AIFdb proper (www.aifdb.org/json/<id>), and the raw text is
+// excerpted from the episode transcript (ExcerptTranscript).
 const (
 	DefaultCorporaBaseURL = "https://corpora.aifdb.org"
 	DefaultNodesetBaseURL = "https://www.aifdb.org"
 	DefaultInterval       = 2 * time.Second
 )
 
-// ClientConfig は AIFdb クライアントの設定。
+// ClientConfig configures the AIFdb client.
 type ClientConfig struct {
 	BaseURL string
-	// NodesetBaseURL はノードセット単位の JSON（<NodesetBaseURL>/json/<id>）の取得先。
+	// NodesetBaseURL is where per-nodeset JSON (<NodesetBaseURL>/json/<id>) is fetched from.
 	NodesetBaseURL string
 	Interval       time.Duration
 	UserAgent      string
 	HTTP           *http.Client
 }
 
-// Client は AIFdb corpora の HTTP クライアント。
+// Client is an HTTP client for AIFdb corpora.
 type Client struct {
 	base     string
 	nodesets string
@@ -51,7 +51,7 @@ type Client struct {
 	last     time.Time
 }
 
-// NewClient はクライアントを作る。
+// NewClient creates a client.
 func NewClient(cfg ClientConfig) *Client {
 	base := cfg.BaseURL
 	if base == "" {
@@ -76,7 +76,7 @@ func NewClient(cfg ClientConfig) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), nodesets: strings.TrimRight(ns, "/"), interval: iv, ua: ua, http: hc}
 }
 
-// Corpus はコーパス・サブコーパスのメタ情報。
+// Corpus is metadata for a corpus or subcorpus.
 type Corpus struct {
 	CorpusID     int    `json:"corpusID"`
 	Shortname    string `json:"shortname"`
@@ -87,7 +87,7 @@ type Corpus struct {
 	Licence      string `json:"licence"`
 }
 
-// CorpusDetails は 1 コーパスのメタ情報を返す（出典表記に使う）。
+// CorpusDetails returns metadata for one corpus (used for attribution).
 func (c *Client) CorpusDetails(ctx context.Context, shortname string) (Corpus, error) {
 	var out Corpus
 	q := url.Values{"shortname": {shortname}}
@@ -97,7 +97,7 @@ func (c *Client) CorpusDetails(ctx context.Context, shortname string) (Corpus, e
 	return out, nil
 }
 
-// Subcorpora はコーパス配下のサブコーパス一覧を返す。
+// Subcorpora returns the list of subcorpora under a corpus.
 func (c *Client) Subcorpora(ctx context.Context, shortname string) ([]Corpus, error) {
 	var out struct {
 		Subcorpora []Corpus `json:"subcorpora"`
@@ -109,44 +109,44 @@ func (c *Client) Subcorpora(ctx context.Context, shortname string) ([]Corpus, er
 	return out.Subcorpora, nil
 }
 
-// Document は 1 ノードセット（＝ゴールドの AIF グラフ）と、その素のテキスト。
+// Document is one nodeset (= a gold AIF graph) together with its raw text.
 //
-// Text はアノテーションが付く前の書き起こし（話者[時刻] 本文…）。
-// LLM に渡す入力はこれで、Graph は答え合わせにしか使わない。
+// Text is the transcript before annotation (speaker[time] text...).
+// That is the input given to the LLM; Graph is used only for scoring.
 type Document struct {
 	NodesetID string `json:"nodeset_id"`
 	Corpus    string `json:"corpus"`
 	Text      string `json:"text"`
 	Graph     Graph  `json:"graph"`
-	// GraphSource / TextSource はどこから得たか（SourceArchive / SourceNodesetJSON / SourceEpisodeExcerpt）。
-	// 取得時の AIFdb の状態で入力が変わりうるので、何を使ったかを結果と一緒に残す。
+	// GraphSource / TextSource record where each came from (SourceArchive / SourceNodesetJSON / SourceEpisodeExcerpt).
+	// Inputs can vary with AIFdb's state at fetch time, so what was used is kept alongside the results.
 	GraphSource string `json:"graph_source,omitempty"`
 	TextSource  string `json:"text_source,omitempty"`
-	// TextLocated / TextLocutions は、TextSource が SourceEpisodeExcerpt のとき、
-	// 切り出しの根拠にできた（書き起こしの中で一意に見つかった）L-node の数と総数。
+	// TextLocated / TextLocutions are, when TextSource is SourceEpisodeExcerpt, the number of L-nodes
+	// that could anchor the excerpt (found uniquely in the transcript) and the total number.
 	TextLocated   int `json:"text_located,omitempty"`
 	TextLocutions int `json:"text_locutions,omitempty"`
 }
 
-// Document.GraphSource / TextSource の値。
+// Values of Document.GraphSource / TextSource.
 const (
-	SourceArchive        = "archive"         // サブコーパスのアーカイブに同梱のもの
-	SourceNodesetJSON    = "nodeset-json"    // アーカイブの JSON が壊れていたので www.aifdb.org/json/<id> から取り直した
-	SourceEpisodeExcerpt = "episode-excerpt" // ノードセット単位の素テキストが無いので、エピソードの書き起こしから切り出した
+	SourceArchive        = "archive"         // bundled in the subcorpus archive
+	SourceNodesetJSON    = "nodeset-json"    // the archive's JSON was broken, so it was refetched from www.aifdb.org/json/<id>
+	SourceEpisodeExcerpt = "episode-excerpt" // no per-nodeset raw text, so it was excerpted from the episode transcript
 )
 
-// FetchSubcorpus はサブコーパスを tar.gz で 1 回だけ取得し、
-// ノードセット JSON と対応する素テキストを組にして返す。
+// FetchSubcorpus fetches a subcorpus once as tar.gz and returns
+// nodeset JSON paired with the corresponding raw text.
 //
-// アーカイブの JSON が空・壊れている、またはノードを 1 つも持たないときは、そのノードセットだけを
-// www.aifdb.org/json/<id> から取り直す（取り直せなければエラーにする。黙って落とすと標本が変わる）。
-// ノードセット単位の素テキスト（nodesetNNN.txt）が無く、エピソード単位の書き起こし（それ以外の .txt）が
-// あるときは、そこからノードセットの区間を切り出す。
+// If the archive's JSON is empty, broken, or has no nodes, only that nodeset is refetched from
+// www.aifdb.org/json/<id> (failing that, it is an error; silently dropping it would change the sample).
+// If there is no per-nodeset raw text (nodesetNNN.txt) but there is a per-episode transcript (any other .txt),
+// the nodeset's span is excerpted from it.
 //
-// テキストが作れないノードセットも落とさずに返し（Text は空、TextSource も空）、その ID を 2 つ目の戻り値で返す。
-// 素テキストを使うのは e2e 条件だけで、ゴールドの評価（gold-loc / baseline）には要らないため。
-// 以前はここで落としていたが、2026-10 時点では書き起こし自体が同梱されないサブコーパス
-// （cutietestrun18June2020）があり、落とすと dev の標本が黙って変わってしまう。
+// Nodesets whose text cannot be built are still returned (empty Text and TextSource), and their IDs are returned
+// as the second value. Only the e2e condition uses raw text; gold evaluation (gold-loc / baseline) does not need it.
+// These used to be dropped here, but as of 2026-10 there is a subcorpus whose transcript is not bundled at all
+// (cutietestrun18June2020), and dropping them would silently change the dev sample.
 func (c *Client) FetchSubcorpus(ctx context.Context, shortname string) ([]Document, []string, error) {
 	body, err := c.get(ctx, c.base, "/api/archive.php", url.Values{
 		"shortname": {shortname},
@@ -241,8 +241,8 @@ func (c *Client) readArchive(ctx context.Context, shortname string, body io.Read
 	return docs, noText, nil
 }
 
-// nodesetIDOf はアーカイブ内のファイル名からノードセット ID を取り出す。
-// "nodeset17918.json" → ("17918", true)。ノードセット単位でないファイルは ("", false)。
+// nodesetIDOf extracts the nodeset ID from a file name inside the archive.
+// "nodeset17918.json" → ("17918", true). Files that are not per-nodeset give ("", false).
 func nodesetIDOf(name string) (string, bool) {
 	stem := strings.TrimSuffix(strings.TrimSuffix(name, ".json"), ".txt")
 	id, ok := strings.CutPrefix(stem, "nodeset")
@@ -257,7 +257,7 @@ func nodesetIDOf(name string) (string, bool) {
 	return id, true
 }
 
-// FetchNodeset は 1 ノードセットの JSON を AIFdb 本体から取得する。
+// FetchNodeset fetches one nodeset's JSON from AIFdb proper.
 func (c *Client) FetchNodeset(ctx context.Context, id string) (Graph, error) {
 	body, err := c.get(ctx, c.nodesets, "/json/"+url.PathEscape(id), nil)
 	if err != nil {
@@ -278,7 +278,7 @@ func (c *Client) FetchNodeset(ctx context.Context, id string) (Graph, error) {
 	return g, nil
 }
 
-// nodeset は AIFdb のノードセット JSON の生の形。
+// nodeset is the raw shape of AIFdb's nodeset JSON.
 type nodeset struct {
 	Nodes []struct {
 		NodeID    string `json:"nodeID"`
@@ -297,10 +297,10 @@ type nodeset struct {
 	} `json:"locutions"`
 }
 
-// ParseNodeset は AIFdb のノードセット JSON を正準表現に読み替える。
+// ParseNodeset converts AIFdb nodeset JSON into the canonical representation.
 //
-// AIFdb は TA/RA の既定スキームを scheme に入れない場合があるので、
-// 空なら既定値で埋める（スキーム名の欠落を「別のスキーム」と数えないため）。
+// AIFdb sometimes omits the default TA/RA scheme from scheme, so an
+// empty value is filled with the default (so a missing scheme name is not counted as "a different scheme").
 func ParseNodeset(id string, b []byte) (Graph, error) {
 	var ns nodeset
 	if err := json.Unmarshal(b, &ns); err != nil {

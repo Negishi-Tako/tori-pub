@@ -11,7 +11,7 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/perturb"
 )
 
-// judgeDiagnostics は判定者の品質の基準（計画 §5.4）を判定者ごとに出す。
+// judgeDiagnostics reports the judge quality criteria (plan §5.4) per judge.
 func judgeDiagnostics(w io.Writer, names []string, types []perturb.TripletType, trueSign []int, js []fit.Judgment) {
 	fmt.Fprintln(w, "\n## 判定者の診断（計画 §5.4）")
 	fmt.Fprintln(w, "\n| 判定者 | 判定数 | 同程度の割合 | 提示順を入れ替えても同じ | T1 正答率 |")
@@ -67,7 +67,7 @@ func ratio(a, b int) string {
 	return fmt.Sprintf("%.1f%%（%d/%d）", pct(a, b), a, b)
 }
 
-// paramTable はパラメータごとの推定値・区間・判断（計画 §7.4）を出す。
+// paramTable reports per-parameter estimates, intervals and decisions (plan §7.4).
 func paramTable(w io.Writer, th0 ged.Theta, truth *ged.Theta, trueNeg *float64, est fit.Params, boot [][]float64, m float64) {
 	fmt.Fprintln(w, "\n## パラメータの推定（計画 §6・§7.4）")
 	fmt.Fprintf(w, "\n判断の幅 m = ±%.2f（置換関数の節点は幅で判断しない）。区間はクラスタブートストラップ %d 回のパーセンタイル。\n", m, len(boot))
@@ -125,7 +125,7 @@ func num(v float64) string {
 	return fmt.Sprintf("%.2f", v)
 }
 
-// auxTable は判定者ごとの補助パラメータ。
+// auxTable is the per-judge auxiliary parameters.
 func auxTable(w io.Writer, names []string, est fit.Params, truth []judgeTruth) {
 	fmt.Fprintln(w, "\n## 判定者の補助パラメータ")
 	if truth != nil {
@@ -146,7 +146,7 @@ func auxTable(w io.Writer, names []string, est fit.Params, truth []judgeTruth) {
 
 type judgeTruth struct{ beta, tau, pi float64 }
 
-// agreementTable は規則ごとの一致率（計画 §7.3）。
+// agreementTable is the agreement rate per rule (plan §7.3).
 func agreementTable(w io.Writer, rows []agreeRow, js []fit.Judgment, negMask []bool) {
 	fmt.Fprintln(w, "\n## 規則ごとの一致率（計画 §7.3）")
 	fmt.Fprintln(w, "\nΔ の符号が判定の多数（A / B）と一致する割合。多数が「同程度」の三つ組は除く。")

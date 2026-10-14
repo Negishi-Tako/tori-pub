@@ -13,13 +13,13 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/stats"
 )
 
-// 論文（TJ-SIF 2026）の検定を data/metrics/ の集計値だけから再現する。
+// Reproduces the paper's (TJ-SIF 2026) tests from the aggregates in data/metrics/ alone.
 //
-// stats.md（-report）は 1 回の実行の中で条件対ごとに 6 指標をまたいで Holm を掛ける探索用の集計で、
-// 実行をまたぐ比較（A − K など）も無向 F1・命題 F1 も含まない。論文の主張は次の 5 比較を
-// 1 つの族として Holm 補正したもので、その計算はここにある。
+// stats.md (-report) is an exploratory summary that applies Holm across 6 metrics per condition pair
+// within a single run, and includes neither cross-run comparisons (such as A − K) nor undirected F1 or
+// proposition F1. The paper's claims Holm-correct the following 5 comparisons as one family; that is computed here.
 const (
-	paperMetric  = "aif-ged/0.4" // 論文の S_gold は 0.4（命題グラフでは 0.3 と同じ値）
+	paperMetric  = "aif-ged/0.4" // the paper's S_gold is 0.4 (same value as 0.3 on proposition graphs)
 	paperWeights = "uniform"
 	condE        = "gold-loc@v3/5.6-luna"
 	condK        = "gold-loc@w1/5.6-luna"
@@ -29,12 +29,12 @@ const (
 )
 
 type paperComparison struct {
-	Label  string // 論文での書き方
-	A, B   string // 条件（差は A − B）
-	Column string // data/metrics の列
+	Label  string // how the paper writes it
+	A, B   string // conditions (difference is A − B)
+	Column string // column in data/metrics
 }
 
-// paperFamily は論文で Holm 補正を掛ける 5 比較。
+// paperFamily is the 5 comparisons the paper Holm-corrects.
 var paperFamily = []paperComparison{
 	{"A − K, undirected F1", condA, condK, "rel_undirected_f1"},
 	{"E − A, strict F1", condE, condA, "rel_typed_f1"},
@@ -43,7 +43,7 @@ var paperFamily = []paperComparison{
 	{"E − N, S_gold", condE, condN, "reduced_sim_gold"},
 }
 
-// paperLargerModel は大きいモデルの比較（60 件。族の外なので補正しない）。
+// paperLargerModel is the larger-model comparison (60 items; outside the family, so uncorrected).
 var paperLargerModel = []paperComparison{
 	{"terra − luna, strict F1", condETerra, condE, "rel_typed_f1"},
 	{"terra − luna, undirected F1", condETerra, condE, "rel_undirected_f1"},
@@ -52,14 +52,14 @@ var paperLargerModel = []paperComparison{
 	{"terra − luna, dialogue-act accuracy", condETerra, condE, "force_acc"},
 }
 
-// paperMetricsDir は論文の数値の出どころ。差し替えられないよう定数にしている
-// （公開した集計値と別の CSV から「論文の検定」を出せてしまうと、論文との対応が崩れる）。
-// テスト（paperstats_test.go）も同じ場所を読むので、ここを書き換えたらテストが論文との一致を確かめる。
+// paperMetricsDir is where the paper's numbers come from. It is a constant so it cannot be swapped
+// (if "the paper's tests" could be produced from a CSV other than the published aggregates, the link to the paper would break).
+// The test (paperstats_test.go) reads the same place, so if this changes, the test checks agreement with the paper.
 const paperMetricsDir = "data/metrics"
 
 var paperMetricFiles = []string{"rerun_n124_v3.csv", "rerun_n124_w1.csv", "rerun_n124_adj.csv", "rerun_n60_terra.csv"}
 
-// metricTable は 条件 → ノードセット → 列 → 値。
+// metricTable maps condition → nodeset → column → value.
 type metricTable map[string]map[string]map[string]float64
 
 func loadPaperMetrics(dir string) (metricTable, error) {
@@ -102,7 +102,7 @@ func loadPaperMetrics(dir string) (metricTable, error) {
 	return t, nil
 }
 
-// pairedSeries は両条件にあるノードセットだけを、ノードセット ID 順に並べて返す。
+// pairedSeries returns only the nodesets present in both conditions, ordered by nodeset ID.
 func (t metricTable) pairedSeries(c paperComparison) (xs, ys []float64, err error) {
 	if t[c.A] == nil || t[c.B] == nil {
 		return nil, nil, fmt.Errorf("aif-eval: 条件 %s または %s が data/metrics に無い", c.A, c.B)
@@ -130,7 +130,7 @@ type paperResult struct {
 	Paired     stats.PairedComparison
 	MeanA      float64
 	MeanB      float64
-	PHolm      float64 // 族の外（補正しない比較）では -1
+	PHolm      float64 // -1 outside the family (uncorrected comparisons)
 }
 
 func runPaperComparisons(t metricTable, cs []paperComparison, holm bool) ([]paperResult, error) {
@@ -157,7 +157,7 @@ func runPaperComparisons(t metricTable, cs []paperComparison, holm bool) ([]pape
 	return out, nil
 }
 
-// paperStats は論文の検定を metricsDir の CSV から計算して w に書く。
+// paperStats computes the paper's tests from the CSVs in metricsDir and writes them to w.
 func paperStats(metricsDir string, w io.Writer) error {
 	t, err := loadPaperMetrics(metricsDir)
 	if err != nil {

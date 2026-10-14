@@ -15,13 +15,13 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/synth"
 )
 
-// 書き下し（G3）と検証（G4）を三つ組の枠ごとに通す。
+// Runs realization (G3) and verification (G4) per triplet slot.
 //
-//   - 変種を書き下したら、別のリクエストで luna に検証させる（計画では生成と別系列のモデルだが、PoC では luna だけ）
-//   - 不合格なら理由を添えて 1 回だけ作り直し、それでも不合格なら編集計画を引き直す（枠ごとに最大 3 回）
-//   - 「グラフを変える編集があるのに文章が元のまま」は検証の前に機械的に落とす
-//   - T3 は、現行の値段で差が 0 付近の組と明確な組を半々にする（計画 §4.3）。
-//     書き下す前に cos が分からないので、編集の強さから見込んだ cos で差を予測して選ぶ
+//   - After realizing a variant, have luna verify it in a separate request (the plan uses a model from a different family than generation; the PoC uses luna only)
+//   - If it fails, regenerate once with the reasons attached; if it still fails, redraw the edit plan (up to 3 times per slot)
+//   - "Edits that change the graph but text unchanged from the source" are dropped mechanically before verification
+//   - For T3, half the pairs have a difference near 0 under current prices and half a clear difference (plan §4.3).
+//     cos is unknown before realization, so selection predicts the difference from a cos estimated from edit strength
 
 const nearThreshold = 0.3
 
@@ -35,7 +35,7 @@ type variantCheck struct {
 
 type verifyStats struct {
 	mu        sync.Mutex
-	byKind    map[perturb.Kind]*[4]int // 試行した変種, 1 回目で合格, 作り直しで合格, 不合格
+	byKind    map[perturb.Kind]*[4]int // variants tried, passed first time, passed after regeneration, failed
 	reasons   map[string]int
 	natural   [6]int
 	slots     int
@@ -103,7 +103,7 @@ type verifyPipeline struct {
 	stats   *verifyStats
 }
 
-// buildVerified は全枠の三つ組を作る。失敗した枠は Err つきで返す。
+// buildVerified builds the triplets for all slots. Failed slots are returned with Err set.
 func buildVerified(ctx context.Context, g *synth.Generator, mt *meter, sources []synth.Discussion, srcErr []error, rng *rand.Rand, seed uint64) ([]*pilotTriplet, *verifyStats) {
 	pp := &verifyPipeline{ctx: ctx, g: g, mt: mt, sources: sources, seed: seed,
 		stats: &verifyStats{byKind: map[perturb.Kind]*[4]int{}, reasons: map[string]int{}}}
@@ -171,7 +171,7 @@ func (pp *verifyPipeline) slot(s slotSpec) *pilotTriplet {
 	return t
 }
 
-// drawPair は編集計画を引く。near が非 nil なら、予測した差が目標（0 付近か明確か）に合うまで引き直す。
+// drawPair draws an edit plan. If near is non-nil, it redraws until the predicted difference matches the target (near 0 or clear).
 func drawPair(rng *rand.Rand, src ged.Graph, typ perturb.TripletType, near *bool) (a, b perturb.Variant, pred float64) {
 	for range 40 {
 		ka, kb := perturb.Plan(rng, typ)
@@ -192,7 +192,7 @@ func drawPair(rng *rand.Rand, src ged.Graph, typ perturb.TripletType, near *bool
 	return a, b, pred
 }
 
-// predictedDelta は編集の強さから見込んだ cos で、現行の値段での差 Δ を予測する。
+// predictedDelta predicts the difference Δ under current prices, using a cos estimated from edit strength.
 func predictedDelta(src ged.Graph, a, b perturb.Variant) float64 {
 	th := ged.Current()
 	fa, errA := ged.Compute(src, a.Graph, predictedSim(a), th)
@@ -221,7 +221,7 @@ func predictedSim(v perturb.Variant) ged.Sim {
 		o, ok := v.Origin[vid]
 		switch {
 		case !ok || o != ref:
-			return 0.3 // 別の命題どうしの cos の見込み
+			return 0.3 // expected cos between different propositions
 		case own[vid] > 0:
 			return own[vid]
 		}
@@ -229,7 +229,7 @@ func predictedSim(v perturb.Variant) ged.Sim {
 	}
 }
 
-// realizeVerified は書き下して検証し、不合格なら理由を添えて 1 回だけ作り直す。
+// realizeVerified realizes and verifies, regenerating once with the reasons attached if it fails.
 func (pp *verifyPipeline) realizeVerified(src synth.Discussion, v perturb.Variant, prefix string) (synth.Discussion, synth.RealizeStats, variantCheck, bool) {
 	var rec variantCheck
 	feedback := ""
@@ -275,7 +275,7 @@ func (pp *verifyPipeline) realizeVerified(src synth.Discussion, v perturb.Varian
 	return synth.Discussion{}, synth.RealizeStats{}, rec, false
 }
 
-// writeVerifyReport は検証と割り付けの集計を書く。
+// writeVerifyReport writes the verification and allocation summary.
 func writeVerifyReport(b *bytes.Buffer, s *verifyStats, kept []*pilotTriplet, d0 []float64) {
 	fmt.Fprintln(b, "\n## 書き下しの検証（G4 の代わり。luna が別のリクエストで検証）")
 	fmt.Fprintf(b, "\n- 三つ組の枠 %d、採用 %d、破棄 %d（3 回の編集計画とも不合格）。編集計画の引き直し 計 %d 回\n", s.slots, s.accepted, s.discarded, s.replans)
@@ -307,7 +307,7 @@ func writeVerifyReport(b *bytes.Buffer, s *verifyStats, kept []*pilotTriplet, d0
 	fmt.Fprintf(b, "\n採用した変種の自然さ（検証者の評価）: 5 = %d、4 = %d、3 = %d（話者の入れ替えだけの変種は評価なし: %d）\n",
 		s.natural[5], s.natural[4], s.natural[3], s.natural[0])
 
-	// T3 の割り付けが実際の差でどうなったか（予測は見込みの cos、実際は埋め込みの cos）。
+	// How the T3 allocation turned out by actual difference (predicted uses estimated cos; actual uses embedding cos).
 	var nearN, nearHit, clearN, clearHit int
 	for i, t := range kept {
 		if t.NearTarget == nil {

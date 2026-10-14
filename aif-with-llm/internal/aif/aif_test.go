@@ -40,8 +40,8 @@ func TestParseNodesetReadsAIFdbShape(t *testing.T) {
 	}
 }
 
-// ゴールドの前処理で落ちるのは「辺を持たない L-node」（収録ツール由来の複製）と
-// メタモデルに無い辺だけであること。命題や関係が黙って消えると評価が壊れる。
+// Gold preprocessing must drop only "L-nodes without edges" (duplicates from the recording tool) and
+// edges not in the metamodel. If propositions or relations silently vanish, evaluation breaks.
 func TestNormalizeKeepsPropositionsAndRelations(t *testing.T) {
 	g := loadGold(t)
 	before := g.CountByType()
@@ -88,7 +88,7 @@ func TestRelationsCollapseSNodes(t *testing.T) {
 	}
 }
 
-// Validate は壊れたグラフを見逃さないこと。
+// Validate must not miss broken graphs.
 func TestValidateRejectsDirectIToI(t *testing.T) {
 	g := aif.Graph{
 		ID: "x",
@@ -104,7 +104,7 @@ func TestValidateRejectsDirectIToI(t *testing.T) {
 	}
 }
 
-// 基準線グラフは AIF として妥当で、関係を 1 本も持たないこと。
+// The baseline graph must be valid AIF and have no relations.
 func TestBaselineGraphIsValidAndRelationFree(t *testing.T) {
 	locs := []aif.LocutionInput{
 		{Speaker: "A", Text: "schools should reopen"},
@@ -125,8 +125,8 @@ func TestBaselineGraphIsValidAndRelationFree(t *testing.T) {
 	}
 }
 
-// 正規化後のすべての辺に種別名が付くこと（GED はこれを見て一致を数える）。
-// 関係を畳んだ辺は、関係の本数（前提ごとに 1 本）と一致すること。
+// Every edge after normalization must carry a type name (GED counts matches using it).
+// Edges from folded relations must match the number of relations (one per premise).
 func TestLabeledEdges(t *testing.T) {
 	norm, _ := aif.Normalize(loadGold(t))
 	edges := norm.LabeledEdges()
@@ -147,7 +147,7 @@ func TestLabeledEdges(t *testing.T) {
 	}
 }
 
-// L-node の順序は JSON の並びではなく TA の連鎖で決まること。
+// L-node order must be determined by the TA chain, not by JSON order.
 func TestLocutionOrderFollowsTransitions(t *testing.T) {
 	g := aif.BaselineGraph("x", []aif.LocutionInput{{Speaker: "A", Text: "a"}, {Speaker: "B", Text: "b"}, {Speaker: "C", Text: "c"}})
 	slices.Reverse(g.Nodes)
@@ -163,8 +163,8 @@ func TestLocutionOrderFollowsTransitions(t *testing.T) {
 	}
 }
 
-// 5 段階の依存度で閾値を切ったとき、段ごとに関係が落ちていくこと（落とした後も AIF として妥当）。
-// 3 値の確信度と混ぜても梯子を取り違えないこと。申告が無い関係は落とさないこと。
+// Thresholding on 5-level dependence must drop relations rung by rung (and remain valid AIF afterward).
+// Mixing in 3-level confidence must not confuse the ladders. Relations without a self-report must not be dropped.
 func TestGradeLadderAndFiltering(t *testing.T) {
 	id := func(prefix string, i int) string { return prefix + strconv.Itoa(i) }
 	g := aif.Graph{ID: "g"}
@@ -199,7 +199,7 @@ func TestGradeLadderAndFiltering(t *testing.T) {
 			t.Errorf("絞り込んだグラフも AIF として妥当であるはず: %v", v)
 		}
 	}
-	// 3 値の語彙なら 3 段の梯子を返す。
+	// A 3-level vocabulary returns a 3-rung ladder.
 	h := aif.Graph{ID: "h", Nodes: []aif.Node{
 		{ID: "I0", Type: aif.TypeI, Text: "a"},
 		{ID: "I1", Type: aif.TypeI, Text: "b"},

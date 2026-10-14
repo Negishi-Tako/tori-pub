@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// 2026-10 時点の AIFdb のエピソード書き起こしと同じ形（CRLF・雑音行・段落をまたぐターン）。
-// 話者と本文は架空のもの（コーパス本文はリポジトリに含めない）。
+// Same form as AIFdb episode transcripts as of 2026-10 (CRLF, noise lines, turns spanning paragraphs).
+// Speakers and text are fictional (corpus text is not included in the repository).
 const episodeFixture = "Part 1\r\nWords: 273\r\nAlex Moore\r\n[0:01:27] Hello. Even if the new bus timetable starts before the end of the spring season, most riders are unlikely to notice any change.\r\n\r\nRobin Hale\r\n[0:01:58] Sam, let's start with you. Some libraries are opening late on the first of May.\r\n \r\nAnd some are not opening late at all this season.\r\nwhite_check_mark\r\neyes\r\n\r\n7:37\r\nPart 2\r\nWords: 298\r\nSam Carter\r\n[0:02:07] It is an uneven pattern, Robin. The council announced a date to residents without any consultation.\r\n\r\nJo Baker\r\n[0:03:05] I have three library cards and one of them can be renewed next week.\r\n"
 
 func TestParseTranscriptJoinsParagraphsAndDropsNoise(t *testing.T) {
@@ -43,7 +43,7 @@ func excerptGraph(texts ...string) Graph {
 	return g
 }
 
-// 区間は最初の発話の頭から最後の発話の末尾までで、ターンの形（話者・時刻）を保つこと。
+// The span must run from the start of the first utterance to the end of the last, keeping the turn form (speaker, time).
 func TestExcerptTranscriptCutsSpan(t *testing.T) {
 	g := excerptGraph(
 		"Robin Hale : Some libraries are opening late on the first of May",
@@ -63,7 +63,7 @@ func TestExcerptTranscriptCutsSpan(t *testing.T) {
 	}
 }
 
-// 「話者: 本文」「アノテータ: 話者 : 本文」の形でも見つけること。
+// Utterances must also be found in the "speaker: text" and "annotator: speaker : text" forms.
 func TestExcerptTranscriptHandlesSpeakerPrefixes(t *testing.T) {
 	g := excerptGraph("Jo Baker: I have three library cards", "Annotator: Sam Carter : The council announced a date to residents")
 	if _, located, _, ok := ExcerptTranscript(episodeFixture, g); !ok || located != 2 {
@@ -71,9 +71,9 @@ func TestExcerptTranscriptHandlesSpeakerPrefixes(t *testing.T) {
 	}
 }
 
-// 1 発話だけが遠く離れた箇所に一致しても、区間をそこまで伸ばさないこと。
+// Even if one utterance matches somewhere far away, the span must not stretch to it.
 func TestExcerptTranscriptIgnoresDistantOutlier(t *testing.T) {
-	filler := strings.Repeat("the panel went on to discuss many unrelated matters at length. ", 80) // 区切りより十分長い
+	filler := strings.Repeat("the panel went on to discuss many unrelated matters at length. ", 80) // well beyond the cutoff
 	episode := "A\n[0:00:01] Opening remarks about library opening plans today.\n\nB\n[0:00:10] " + filler +
 		"\n\nC\n[0:09:00] Queues make people feel rushed in shops. People should decide for themselves.\n"
 	g := excerptGraph("A : Opening remarks about library opening plans", "C : Queues make people feel rushed in shops", "C : People should decide for themselves")
@@ -92,9 +92,9 @@ func TestExcerptTranscriptFailsWhenNothingFound(t *testing.T) {
 	}
 }
 
-// 2026-10 時点の壊れたアーカイブ（JSON が 0 バイト・素テキストはエピソード単位）でも、
-// JSON は www.aifdb.org/json/<id> から取り直し、素テキストは書き起こしから切り出すこと。
-// 健全なアーカイブ（中身のある JSON・nodesetNNN.txt）はそのまま使うこと。
+// Even with the broken archives as of 2026-10 (0-byte JSON, per-episode raw text),
+// JSON must be refetched from www.aifdb.org/json/<id> and raw text excerpted from the transcript.
+// Healthy archives (non-empty JSON, nodesetNNN.txt) must be used as-is.
 func TestReadArchiveFallsBackForBrokenArchive(t *testing.T) {
 	nodeset := `{"nodes":[{"nodeID":"1","type":"L","text":"Robin Hale : Some libraries are opening late on the first of May"},` +
 		`{"nodeID":"2","type":"L","text":"Sam Carter : It is an uneven pattern, Robin"},` +
@@ -112,7 +112,7 @@ func TestReadArchiveFallsBackForBrokenArchive(t *testing.T) {
 	defer srv.Close()
 
 	archive := tarGz(t, map[string]string{
-		"nodeset100.json":    "", // 壊れている
+		"nodeset100.json":    "", // broken
 		"nodeset200.json":    nodeset,
 		"nodeset200.txt":     "Robin Hale\n[0:00:01] original per-nodeset text",
 		"cutietestrun_x.txt": episodeFixture,
@@ -141,7 +141,7 @@ func TestReadArchiveFallsBackForBrokenArchive(t *testing.T) {
 	}
 }
 
-// 壊れた JSON を取り直せないときは、黙って落とさずエラーにすること（標本が変わるため）。
+// If broken JSON cannot be refetched, it must be an error rather than silently dropped (the sample would change).
 func TestReadArchiveErrorsWhenRefetchFails(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
@@ -173,8 +173,8 @@ func tarGz(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// 書き起こしが 1 本も無いアーカイブ（2026-10 時点の cutietestrun18June2020）でも、
-// ノードセットは落とさずに返し、素テキストが無いことを記録すること。
+// Even for an archive with no transcript at all (cutietestrun18June2020 as of 2026-10),
+// nodesets must be returned rather than dropped, recording that there is no raw text.
 func TestReadArchiveKeepsNodesetsWithoutText(t *testing.T) {
 	nodeset := `{"nodes":[{"nodeID":"1","type":"L","text":"A : hello there everyone in the room"}],"edges":[],"locutions":[]}`
 	c := NewClient(ClientConfig{Interval: time.Millisecond})

@@ -13,7 +13,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/llm"
 )
 
-// API を叩かずに、取得済みデータ → 基準線の比較 → 集計の書き出しまでを通す。
+// Runs fetched data → baseline comparison → writing aggregates, without calling the API.
 func TestReportPipelineWithoutAPI(t *testing.T) {
 	b, err := os.ReadFile("../../testdata/aif/fixture.json")
 	if err != nil {
@@ -71,10 +71,10 @@ func TestReportPipelineWithoutAPI(t *testing.T) {
 	}
 }
 
-// 基準線の入力は、TA の連鎖順に並んだ「話者 : 本文」の本文部分であること。
+// The baseline input must be the text part of "speaker : text", ordered along the TA chain.
 func TestLocutionsOfStripsSpeakerAndFollowsTransitions(t *testing.T) {
 	g := aif.BaselineGraph("x", []aif.LocutionInput{{Speaker: "Alice", Text: "first"}, {Speaker: "Bob", Text: "second"}})
-	g.Nodes = append(g.Nodes[len(g.Nodes)/2:], g.Nodes[:len(g.Nodes)/2]...) // JSON の並びを崩す
+	g.Nodes = append(g.Nodes[len(g.Nodes)/2:], g.Nodes[:len(g.Nodes)/2]...) // scramble the JSON order
 	got := locutionsOf(g)
 	if len(got) != 2 || got[0] != (aif.LocutionInput{Speaker: "Alice", Text: "first"}) || got[1].Text != "second" {
 		t.Errorf("locutionsOf = %+v", got)

@@ -1,7 +1,7 @@
-// Command gcj は GED の編集コストを判定から推定する実験の CLI。
+// Command gcj is the CLI for the experiment that estimates GED edit costs from judgments.
 //
-//	gcj -simulate   合成の判定で、推定がコストを取り戻せるかを確かめる（API 不使用、計画 P1）
-//	gcj -pilot      luna で元の議論・変種・判定を作り、通しで推定する（PoC）
+//	gcj -simulate   check with synthetic judgments whether estimation can recover the costs (no API, plan P1)
+//	gcj -pilot      build source arguments, variants and judgments with luna, and estimate end to end (PoC)
 package main
 
 import (

@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// Majority は三つ組ごとの判定の多数（同数で割れたら ok = false）。
+// Majority is the majority judgment per triplet (ok = false on a tie).
 func Majority(n int, js []Judgment) (maj []Answer, ok []bool) {
 	counts := make([][3]int, n)
 	for _, k := range js {
@@ -31,9 +31,9 @@ func Majority(n int, js []Judgment) (maj []Answer, ok []bool) {
 	return maj, ok
 }
 
-// Agreement は Δ の符号が判定の多数（A / B）と一致する割合（計画 §7.3）。
-// 多数が「同程度」の三つ組と多数が決まらない三つ組は除く。Δ = 0 は 0.5 と数える。
-// only が nil でなければ only[t] が true の三つ組だけを数える。
+// Agreement is the fraction where the sign of Δ agrees with the majority judgment (A / B) (plan §7.3).
+// Triplets whose majority is "about the same" or has no majority are excluded. Δ = 0 counts as 0.5.
+// If only is non-nil, only triplets with only[t] true are counted.
 func Agreement(delta []float64, js []Judgment, only []bool) (rate float64, n int) {
 	maj, ok := Majority(len(delta), js)
 	hit := 0.0
@@ -55,7 +55,7 @@ func Agreement(delta []float64, js []Judgment, only []bool) (rate float64, n int
 	return hit / float64(n), n
 }
 
-// subset は元の議論の番号の列（重複可）から三つ組と判定を組み直す。
+// subset rebuilds triplets and judgments from a list of source argument indices (duplicates allowed).
 func subset(trips []Triplet, js []Judgment, sources []int) ([]Triplet, []Judgment) {
 	bySource := map[int][]int{}
 	for i, t := range trips {
@@ -70,7 +70,7 @@ func subset(trips []Triplet, js []Judgment, sources []int) ([]Triplet, []Judgmen
 	for c, s := range sources {
 		for _, i := range bySource[s] {
 			t := trips[i]
-			t.Source = c // 重複して引いた議論は別のクラスタとして扱う
+			t.Source = c // an argument drawn more than once is treated as a separate cluster
 			idx := len(ot)
 			ot = append(ot, t)
 			for _, k := range byTriplet[i] {
@@ -95,8 +95,8 @@ func sourceIDs(trips []Triplet) []int {
 	return out
 }
 
-// Bootstrap は元の議論単位のクラスタブートストラップ（計画 §6.4）。
-// 各回の推定値 [θ..., θ_neg] を返す。
+// Bootstrap is a cluster bootstrap over source arguments (plan §6.4).
+// It returns the estimates [θ..., θ_neg] of each round.
 func Bootstrap(trips []Triplet, js []Judgment, opts Options, est Params, reps int, seed uint64) ([][]float64, error) {
 	ids := sourceIDs(trips)
 	out := make([][]float64, reps)
@@ -132,7 +132,7 @@ func Bootstrap(trips []Triplet, js []Judgment, opts Options, est Params, reps in
 	return out, nil
 }
 
-// CrossValidate は元の議論単位の k 分割交差検証。学習に使っていない三つ組での Δ を返す。
+// CrossValidate is k-fold cross-validation over source arguments. It returns Δ on triplets not used for training.
 func CrossValidate(trips []Triplet, js []Judgment, opts Options, k int, seed uint64) ([]float64, error) {
 	ids := sourceIDs(trips)
 	rng := rand.New(rand.NewPCG(seed, 7))
@@ -173,7 +173,7 @@ func CrossValidate(trips []Triplet, js []Judgment, opts Options, k int, seed uin
 	return out, nil
 }
 
-// Quantile は昇順に並べた値の分位点（線形補間）。
+// Quantile is the quantile of values sorted in ascending order (linear interpolation).
 func Quantile(sorted []float64, q float64) float64 {
 	if len(sorted) == 0 {
 		return math.NaN()
@@ -184,7 +184,7 @@ func Quantile(sorted []float64, q float64) float64 {
 	return sorted[lo] + (pos-float64(lo))*(sorted[hi]-sorted[lo])
 }
 
-// SD は標本標準偏差。
+// SD is the sample standard deviation.
 func SD(v []float64) float64 {
 	if len(v) < 2 {
 		return math.NaN()

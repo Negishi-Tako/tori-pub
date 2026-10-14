@@ -1,5 +1,5 @@
-// Package perturb は編集カタログ（計画 §4.2）と、三つ組の編集計画の抽選（§4.3）を持つ。
-// 編集の種類と量はここで乱数（seed 固定）で決める。生成側の LLM は「どちらが近いか」を知らない。
+// Package perturb holds the edit catalog (plan §4.2) and draws edit plans for triplets (§4.3).
+// The kinds and amounts of edits are decided here by random draws (fixed seed). The generating LLM does not know "which is closer".
 package perturb
 
 import (
@@ -10,46 +10,46 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/ged"
 )
 
-// Kind は編集の種類。
+// Kind is a kind of edit.
 type Kind string
 
 const (
-	PPara  Kind = "P-para"  // 命題の言い換え（意味は保つ）
-	PShift Kind = "P-shift" // 命題の内容を変える（役割は保つ）
-	PNeg   Kind = "P-neg"   // 極性・量化の反転
-	PDel   Kind = "P-del"   // 孤立した命題の欠落
-	PAdd   Kind = "P-add"   // 孤立した命題の余分
-	PDelR  Kind = "P-del+R" // 関係ごと命題が欠落
-	RDel   Kind = "R-del"   // 関係だけの欠落
-	RAdd   Kind = "R-add"   // 関係だけの余分
-	RType  Kind = "R-type"  // 種別の付け替え
-	RRev   Kind = "R-rev"   // 向きの反転
-	XSpk   Kind = "X-spk"   // 話者の入れ替え（命題グラフは不変）
-	XSurf  Kind = "X-surf"  // 言い回しの変更（命題グラフは不変）
+	PPara  Kind = "P-para"  // paraphrase a proposition (meaning preserved)
+	PShift Kind = "P-shift" // change a proposition's content (role preserved)
+	PNeg   Kind = "P-neg"   // flip polarity or quantification
+	PDel   Kind = "P-del"   // missing isolated proposition
+	PAdd   Kind = "P-add"   // extra isolated proposition
+	PDelR  Kind = "P-del+R" // proposition missing along with its relations
+	RDel   Kind = "R-del"   // missing relation only
+	RAdd   Kind = "R-add"   // extra relation only
+	RType  Kind = "R-type"  // relabel the type
+	RRev   Kind = "R-rev"   // reverse the direction
+	XSpk   Kind = "X-spk"   // swap speakers (proposition graph unchanged)
+	XSurf  Kind = "X-surf"  // change wording (proposition graph unchanged)
 )
 
-// Edit は 1 つの編集。
+// Edit is a single edit.
 type Edit struct {
 	Kind Kind `json:"kind"`
-	// Prop は対象の命題（P-para / P-shift / P-neg / P-del / P-del+R）、P-add なら新しい命題の ID。
+	// Prop is the target proposition (P-para / P-shift / P-neg / P-del / P-del+R), or the new proposition's ID for P-add.
 	Prop string `json:"prop,omitempty"`
-	// Edge は対象の辺（R-del / R-type / R-rev）、R-add なら足す辺。
+	// Edge is the target edge (R-del / R-type / R-rev), or the edge to add for R-add.
 	Edge *ged.Edge `json:"edge,omitempty"`
-	// NewKind は R-type の付け替え先。
+	// NewKind is the new type for R-type.
 	NewKind string `json:"new_kind,omitempty"`
-	// Strength は P-para（weak / medium / strong）と P-shift（small / medium / large）の強さ。
+	// Strength is the strength for P-para (weak / medium / strong) and P-shift (small / medium / large).
 	Strength string `json:"strength,omitempty"`
 }
 
-// Variant は編集を適用した変種。
+// Variant is a variant with edits applied.
 type Variant struct {
 	Graph ged.Graph `json:"graph"`
 	Edits []Edit    `json:"edits"`
-	// Origin は変種の命題 → 元の命題（足した命題には無い）。
+	// Origin maps variant propositions → source propositions (absent for added propositions).
 	Origin map[string]string `json:"origin"`
-	// Changed は内容を変えた命題とその編集。
+	// Changed holds propositions whose content was changed, with their edits.
 	Changed map[string]Edit `json:"changed"`
-	// Neg は極性反転の個数。
+	// Neg is the number of polarity flips.
 	Neg int `json:"neg"`
 }
 
@@ -107,7 +107,7 @@ func pick[T any](rng *rand.Rand, xs []T) (T, bool) {
 	return xs[rng.IntN(len(xs))], true
 }
 
-// draw は今のグラフで kind の編集を 1 つ選んで適用する。適用できなければ false。
+// draw picks and applies one edit of kind on the current graph. Returns false if none can be applied.
 func (s *state) draw(rng *rand.Rand, kind Kind) (Edit, bool) {
 	all := func(string) bool { return true }
 	switch kind {
@@ -205,8 +205,8 @@ func (s *state) replaceEdge(old, nw ged.Edge) {
 	s.touchedE[nw] = true
 }
 
-// Build は S に kinds を順に適用し、各段階の変種を返す（steps[i] は i+1 個目までを適用したもの）。
-// 適用できない編集は飛ばす。
+// Build applies kinds to S in order and returns the variant at each step (steps[i] has the first i+1 applied).
+// Edits that cannot be applied are skipped.
 func Build(rng *rand.Rand, src ged.Graph, kinds []Kind) []Variant {
 	s := &state{g: src.Clone(), touchedP: map[string]bool{}, touchedE: map[ged.Edge]bool{}}
 	var edits []Edit
@@ -248,17 +248,17 @@ func snapshot(src, g ged.Graph, edits []Edit) Variant {
 	return v
 }
 
-// TripletType は三つ組の種類（計画 §4.3）。
+// TripletType is the kind of triplet (plan §4.3).
 type TripletType string
 
 const (
-	T1Monotone  TripletType = "T1" // A の編集 ⊂ B の編集
-	T2SameKind  TripletType = "T2" // 同じ種類で量か強さだけが違う
-	T3Contrast  TripletType = "T3" // 種類の違う編集どうし
-	T4Invariant TripletType = "T4" // 命題グラフを変えない編集だけ
+	T1Monotone  TripletType = "T1" // A's edits ⊂ B's edits
+	T2SameKind  TripletType = "T2" // same kind, differing only in amount or strength
+	T3Contrast  TripletType = "T3" // edits of different kinds
+	T4Invariant TripletType = "T4" // only edits that leave the proposition graph unchanged
 )
 
-// DrawType は割合（10 / 10 / 70 / 10%）で三つ組の種類を選ぶ。
+// DrawType picks a triplet type with proportions 10 / 10 / 70 / 10%.
 func DrawType(rng *rand.Rand) TripletType {
 	switch r := rng.Float64(); {
 	case r < 0.1:
@@ -272,7 +272,7 @@ func DrawType(rng *rand.Rand) TripletType {
 	}
 }
 
-// graphKinds は T3 で使う編集の種類と重み。
+// graphKinds are the edit kinds and weights used in T3.
 var graphKinds = []struct {
 	k Kind
 	w float64
@@ -292,8 +292,8 @@ func drawKind(rng *rand.Rand) Kind {
 	return RType
 }
 
-// Plan は三つ組 1 つ分の編集の種類の列（A 用と B 用）を抽選する。
-// T1 では B の列の先頭が A の列になる（Build を同じ seed で呼ぶと A ⊂ B になる）。
+// Plan draws the sequences of edit kinds for one triplet (for A and for B).
+// In T1, A's sequence is the prefix of B's (calling Build with the same seed gives A ⊂ B).
 func Plan(rng *rand.Rand, typ TripletType) (a, b []Kind) {
 	switch typ {
 	case T1Monotone:

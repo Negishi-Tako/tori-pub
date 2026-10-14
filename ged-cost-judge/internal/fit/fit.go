@@ -1,17 +1,17 @@
-// Package fit は三つ組の 3 択判定から GED のコストを推定する（計画 §6）。
+// Package fit estimates GED costs from 3-way judgments on triplets (plan §6).
 //
-// モデル（Rao–Kupper 型の引き分けつき一対比較。順序ロジットと同じ形）:
+// Model (Rao–Kupper-style paired comparison with ties; the same form as an ordered logit):
 //
-//	Δ_t(θ) = GED_θ(S, B) − GED_θ(S, A)                     （正なら A が近い）
+//	Δ_t(θ) = GED_θ(S, B) − GED_θ(S, A)                     (positive means A is closer)
 //	z_k    = β_j·(Δ_t(θ) + θ_neg·Δneg_t) + π_j·o_k
-//	P(A) = σ(z_k − τ_j),  P(B) = σ(−z_k − τ_j),  P(同程度) = 残り
+//	P(A) = σ(z_k − τ_j),  P(B) = σ(−z_k − τ_j),  P(same) = the rest
 //
-// GED は命題の対応についての最小値なので θ について微分できない点を持つ。
-// 対応を固定すれば θ について線形なので、「対応を解く → 対応を固定して L-BFGS で当てはめる」を
-// 対応が変わらなくなるまで繰り返す（計画 §6.3）。
+// GED is a minimum over proposition matchings, so it has points where it is not differentiable in θ.
+// With the matching fixed it is linear in θ, so "solve the matching → fix it and fit with L-BFGS" is
+// repeated until the matching stops changing (plan §6.3).
 //
-// 計画との違い（PoC）: 当てはめは (θ, θ_neg, β, τ, π) を交互にではなく同時に L-BFGS で解く。
-// 制約 θ ≥ 0・τ > 0・β > 0 は softplus / exp の変数変換で課す。自然さの共変量 γ は入れていない。
+// Differences from the plan (PoC): the fit solves (θ, θ_neg, β, τ, π) jointly with L-BFGS rather than alternating.
+// Constraints θ ≥ 0, τ > 0, β > 0 are imposed via softplus / exp reparameterization. The naturalness covariate γ is not included.
 package fit
 
 import (
@@ -27,7 +27,7 @@ import (
 	"github.com/negishi-tako/tori-pub/ged-cost-judge/internal/ged"
 )
 
-// Answer は 3 択の回答。
+// Answer is a 3-way answer.
 type Answer int
 
 const (
@@ -40,28 +40,28 @@ func (a Answer) String() string {
 	return [...]string{"A", "B", "同程度"}[a]
 }
 
-// Triplet は三つ組 (S, A, B)。
+// Triplet is a triplet (S, A, B).
 type Triplet struct {
-	// Source は元の議論の番号。クラスタブートストラップと交差検証の単位。
+	// Source is the source argument index. The unit for cluster bootstrap and cross-validation.
 	Source int
 	Ref    ged.Graph
 	A, B   ged.Graph
 	SimA   ged.Sim
 	SimB   ged.Sim
-	// NegDiff は極性反転の個数の差（B − A）。GED はこれを観測できない。
+	// NegDiff is the difference in the number of polarity flips (B − A). GED cannot observe it.
 	NegDiff float64
 }
 
-// Judgment は 1 回の判定。
+// Judgment is a single judgment.
 type Judgment struct {
 	Triplet int
 	Judge   int
-	// Order は A を先に見せたら +1、後なら −1。
+	// Order is +1 if A was shown first, −1 if second.
 	Order  float64
 	Answer Answer
 }
 
-// Params は推定するパラメータ。
+// Params are the parameters to estimate.
 type Params struct {
 	Theta    ged.Theta
 	ThetaNeg float64
@@ -70,46 +70,46 @@ type Params struct {
 	Pi       []float64
 }
 
-// Options は推定の設定。
+// Options configures estimation.
 type Options struct {
 	Judges int
-	// Theta0 は L2 正則化の中心（現行値）。
+	// Theta0 is the center of L2 regularization (the current values).
 	Theta0 ged.Theta
-	// Lambda は λ‖θ − θ₀‖² の係数。
+	// Lambda is the coefficient of λ‖θ − θ₀‖².
 	Lambda float64
-	// FitNeg が false なら θ_neg を 0 に固定する。
+	// If FitNeg is false, θ_neg is fixed at 0.
 	FitNeg bool
-	// FixTheta が true なら θ を Theta0 に固定し、補助パラメータだけを当てはめる
-	// （固定の規則にも較正の機会を与えて対数損失を比べるため。計画 §7.3）。
+	// If FixTheta is true, θ is fixed at Theta0 and only the auxiliary parameters are fitted
+	// (to give fixed rules a chance at calibration too and compare log loss; plan §7.3).
 	FixTheta bool
 	MaxOuter int
-	// AuxRidge は log β・log τ・π にかける L2 の係数（0 なら 1e-4）。
-	// 判定者が 1 人で判定が少ないと、完全に分離できて β が発散するので、小規模では弱い事前分布として使う。
+	// AuxRidge is the L2 coefficient on log β, log τ and π (0 means 1e-4).
+	// With a single judge and few judgments, perfect separation makes β diverge, so at small scale it acts as a weak prior.
 	AuxRidge float64
-	// Fixed は値を固定する θ の添字と値（プロファイル尤度を描くため）。
+	// Fixed holds θ indices and values to fix (for drawing profile likelihoods).
 	Fixed map[int]float64
 }
 
-// Result は推定の結果。
+// Result is the estimation result.
 type Result struct {
 	Params Params
-	// NegLogLik は罰則を除いた負の対数尤度。
+	// NegLogLik is the negative log-likelihood excluding penalties.
 	NegLogLik float64
 	Outer     int
 	Converged bool
-	// Cycled は対応が以前の状態に戻った（交互最適化が循環した）ことを表す。
-	// そのときは、各回の θ で対応を解き直した本物の目的関数が最小の回を返す。
+	// Cycled indicates the matching returned to an earlier state (the alternating optimization cycled).
+	// In that case, the round with the smallest true objective, re-solving the matching at each round's θ, is returned.
 	Cycled bool
 }
 
-// diff は対応を固定したときの Δ_t = dphi·θ + c。
+// diff is Δ_t = dphi·θ + c with the matching fixed.
 type diff struct {
 	dphi [ged.NumParams]float64
 	c    float64
 	sig  string
 }
 
-// Features は θ で全三つ組の対応を解き直し、Δ の線形化を返す。
+// Features re-solves the matching of every triplet at θ and returns the linearization of Δ.
 func features(trips []Triplet, th ged.Theta) ([]diff, error) {
 	out := make([]diff, len(trips))
 	errs := make([]error, len(trips))
@@ -144,7 +144,7 @@ func features(trips []Triplet, th ged.Theta) ([]diff, error) {
 	return out, errors.Join(errs...)
 }
 
-// Signatures は θ での三つ組ごとの命題の対応（A と B）の識別子。
+// Signatures identifies the proposition matching (A and B) per triplet at θ.
 func Signatures(trips []Triplet, th ged.Theta) ([]string, error) {
 	ds, err := features(trips, th)
 	if err != nil {
@@ -157,7 +157,7 @@ func Signatures(trips []Triplet, th ged.Theta) ([]string, error) {
 	return out, nil
 }
 
-// Delta は θ での Δ_t（本物の GED の差）を返す。
+// Delta returns Δ_t at θ (the difference in real GED).
 func Delta(trips []Triplet, th ged.Theta) ([]float64, error) {
 	ds, err := features(trips, th)
 	if err != nil {
@@ -178,7 +178,7 @@ func (d diff) value(th ged.Theta) float64 {
 	return v
 }
 
-// 変数ベクトルの並び: u[11]（θ = softplus(u)）, neg, b[J]（β = exp）, s[J]（τ = exp）, p[J]（π）。
+// Variable vector layout: u[11] (θ = softplus(u)), neg, b[J] (β = exp), s[J] (τ = exp), p[J] (π).
 type layout struct{ j int }
 
 func (l layout) size() int      { return ged.NumParams + 1 + 3*l.j }
@@ -204,7 +204,7 @@ func invSoftplus(t float64) float64 {
 
 func sigmoid(x float64) float64 { return 1 / (1 + math.Exp(-x)) }
 
-// logSigmoid は log σ(x) を安定に計算する。
+// logSigmoid computes log σ(x) stably.
 func logSigmoid(x float64) float64 {
 	if x < 0 {
 		return x - math.Log1p(math.Exp(x))
@@ -240,7 +240,7 @@ func (l layout) unpack(x []float64) Params {
 	return p
 }
 
-// answerLogLik は 1 判定の対数尤度と、z・τ についての微分を返す。
+// answerLogLik returns the log-likelihood of one judgment and its derivatives with respect to z and τ.
 func answerLogLik(y Answer, z, tau float64) (ll, dz, dtau float64) {
 	const floor = 1e-12
 	switch y {
@@ -257,14 +257,14 @@ func answerLogLik(y Answer, z, tau float64) (ll, dz, dtau float64) {
 	}
 }
 
-// objective は罰則つきの負の対数尤度と勾配。
+// objective is the penalized negative log-likelihood and its gradient.
 type objective struct {
 	l      layout
 	ds     []diff
 	neg    []float64
 	js     []Judgment
 	opts   Options
-	ridge  float64 // 補助パラメータの数値安定用のごく弱い罰則
+	ridge  float64 // a very weak penalty on auxiliary parameters for numerical stability
 	nllRaw float64
 }
 
@@ -331,7 +331,7 @@ func (o *objective) eval(x, grad []float64) float64 {
 	return f
 }
 
-// Init は初期値（θ = Theta0、β = 1、τ = 0.5、π = 0）。
+// Init returns the initial values (θ = Theta0, β = 1, τ = 0.5, π = 0).
 func Init(opts Options) Params {
 	p := Params{Theta: opts.Theta0, Beta: make([]float64, opts.Judges), Tau: make([]float64, opts.Judges), Pi: make([]float64, opts.Judges)}
 	for j := range opts.Judges {
@@ -340,7 +340,7 @@ func Init(opts Options) Params {
 	return p
 }
 
-// Fit は交互最適化で推定する。init が nil なら Init(opts) から始める。
+// Fit estimates by alternating optimization. If init is nil, it starts from Init(opts).
 func Fit(trips []Triplet, js []Judgment, opts Options, init *Params) (Result, error) {
 	if opts.Judges <= 0 {
 		return Result{}, errors.New("fit: Judges must be positive")
@@ -392,7 +392,7 @@ func Fit(trips []Triplet, js []Judgment, opts Options, init *Params) (Result, er
 		}
 		p = l.unpack(r.X)
 
-		// この θ で対応を解き直し、本物の GED での目的関数を測る（GED は対応についての最小値）。
+		// Re-solve the matching at this θ and measure the objective under real GED (GED is a minimum over matchings).
 		next, err := features(trips, p.Theta)
 		if err != nil {
 			return best, err
@@ -436,7 +436,7 @@ func clone(p Params) Params {
 	return q
 }
 
-// NegLogLik は与えたパラメータでの負の対数尤度（罰則なし、対応は p.Theta で解く）。
+// NegLogLik is the negative log-likelihood at the given parameters (no penalty; matching solved at p.Theta).
 func NegLogLik(trips []Triplet, js []Judgment, p Params) (float64, error) {
 	ds, err := features(trips, p.Theta)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/llm"
 )
 
-// countingEmbedder は呼ばれたテキストを記録する。
+// countingEmbedder records the texts it was called with.
 type countingEmbedder struct {
 	inner llm.Embedder
 	seen  []string
@@ -40,7 +40,7 @@ func TestCachingEmbedder(t *testing.T) {
 		t.Fatalf("upstream saw %d texts, want 2", len(inner.seen))
 	}
 
-	// 2 回目は全部キャッシュから返る。
+	// The second time, everything comes from the cache.
 	second, err := e.Embed(ctx, []string{"環境委員会", "予算委員会"})
 	if err != nil {
 		t.Fatalf("second embed: %v", err)
@@ -56,7 +56,7 @@ func TestCachingEmbedder(t *testing.T) {
 		}
 	}
 
-	// 混在（既知 + 未知）では未知のぶんだけ問い合わせる。
+	// With a mix (known + unknown), only the unknown ones are queried.
 	inner.seen = nil
 	mixed, err := e.Embed(ctx, []string{"環境委員会", "新しい文", "予算委員会"})
 	if err != nil {
@@ -68,7 +68,7 @@ func TestCachingEmbedder(t *testing.T) {
 	if len(mixed) != 3 {
 		t.Fatalf("got %d vectors, want 3", len(mixed))
 	}
-	// 順序が入力どおりに戻ること（ここがずれると検索結果が壊れる）。
+	// The order must match the input (if it shifts, lookup results break).
 	for j := range mixed[0] {
 		if mixed[0][j] != first[0][j] {
 			t.Fatal("cached vector was placed at the wrong index")
@@ -76,7 +76,7 @@ func TestCachingEmbedder(t *testing.T) {
 	}
 }
 
-// 上流のエラーを握り潰さないこと・空入力では上流を呼ばないこと。
+// Upstream errors must not be swallowed, and empty input must not call upstream.
 func TestCachingEmbedderEdgeCases(t *testing.T) {
 	failing := &countingEmbedder{inner: &llm.HashEmbedder{D: 4}, err: errors.New("boom")}
 	if _, err := llm.NewCachingEmbedder(failing, t.TempDir()).Embed(context.Background(), []string{"x"}); err == nil {

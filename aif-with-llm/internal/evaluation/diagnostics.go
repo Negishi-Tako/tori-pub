@@ -9,22 +9,22 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/aif"
 )
 
-// alignmentOf は命題（または発話）の対応を、閾値 threshold で「対応付いた」と数えた P/R/F1 にする。
+// alignmentOf turns a proposition (or utterance) matching into P/R/F1, counting pairs at or above threshold as matched.
 //
-// TP は「cos が閾値以上の対だけを使って作れる 1 対 1 の対応の最大数」、FP / FN は
-// それぞれ生成側・ゴールド側の残り。閾値ごとに最大の対応を解き直す。
+// TP is "the maximum number of one-to-one pairs formable using only pairs with cos at or above the threshold", and FP / FN
+// are the remainders on the generated and gold sides. The maximum matching is re-solved for each threshold.
 //
-// 以前は Hungarian 法の割当（cos の総和を最大にする 1 つの割当）を閾値で切っていた。
-// その割当は閾値を見ないので、閾値以上の対をより多く作れる別の割当があっても選ばない
-// （例: cos が (0.99, 0.50) の割当と (0.56, 0.56) の割当があると総和の大きい前者を選び、
-// 閾値 0.55 での TP が 2 ではなく 1 になる）。閾値を上げ下げして順位を比べる §12.2 の曲線では、
-// 閾値ごとに最良の対応で数えないと、曲線の形が割当の都合で歪む。
+// Previously the Hungarian assignment (the single assignment maximizing the sum of cos) was cut at the threshold.
+// That assignment ignores the threshold, so it does not pick another assignment even if that would form more pairs above it
+// (e.g. given assignments with cos (0.99, 0.50) and (0.56, 0.56), it picks the former with the larger sum,
+// and TP at threshold 0.55 becomes 1 instead of 2). For the §12.2 curves, which compare rankings while moving the threshold,
+// counting without the best matching per threshold distorts the curve's shape for reasons of assignment.
 //
-// matching（Hungarian 法の割当）は平均 cos と AboveThreshold にだけ使う。
-// 関係の照合と GED は引き続きこの割当の上で数える。
+// matching (the Hungarian assignment) is used only for the mean cos and AboveThreshold.
+// Relation matching and GED are still counted on top of this assignment.
 func alignmentOf(matching map[string]string, sim simTable, predIDs, goldIDs []string, threshold float64) (PropositionAlignment, error) {
 	nPred, nGold := len(predIDs), len(goldIDs)
-	// 加算順を固定する（map の反復順で浮動小数の最終桁が揺れないように）。
+	// Fix the summation order (so map iteration order does not wobble the last floating-point digits).
 	var sum float64
 	above := 0
 	for _, p := range slices.Sorted(maps.Keys(matching)) {
@@ -63,10 +63,10 @@ func alignmentOf(matching map[string]string, sim simTable, predIDs, goldIDs []st
 	return out, nil
 }
 
-// maxMatchedAbove は cos が t 以上の (生成, ゴールド) 対だけを使った 1 対 1 の対応の最大数を返す。
+// maxMatchedAbove returns the maximum number of one-to-one (generated, gold) pairs using only pairs with cos at or above t.
 //
-// 閾値以上の対の置換コストを 0、それ以外を「削除 + 挿入」（2）より高くして最小コスト割当を解く。
-// 対を 1 つ増やすごとにコストが 2 下がるので、最小コスト解は対の数が最大の解になる。
+// It solves a minimum-cost assignment with substitution cost 0 for pairs at or above the threshold and, for the rest, higher
+// than "deletion + insertion" (2). Each added pair lowers the cost by 2, so the minimum-cost solution has the most pairs.
 func maxMatchedAbove(predIDs, goldIDs []string, sim simTable, t float64) (int, error) {
 	if len(predIDs) == 0 || len(goldIDs) == 0 {
 		return 0, nil
@@ -95,18 +95,18 @@ func maxMatchedAbove(predIDs, goldIDs []string, sim simTable, t float64) (int, e
 	return n, nil
 }
 
-// goldRelInst はゴールドの関係 1 本（前提が複数ある RA は前提ごとに 1 本と数える）。
+// goldRelInst is one gold relation (an RA with multiple premises counts once per premise).
 //
-// used を持たせて 1 本を 1 回しか消費させないのが要点。pred が同じ命題対に
-// 2 本（RA と MA 等）張ったとき、両方を同じゴールドの関係に当ててしまうと
-// TP が正解の本数を超え、再現率が過大になる。
+// The key point is the used flag, so each one is consumed only once. If pred draws two relations
+// (RA and MA, etc.) on the same proposition pair, matching both to the same gold relation would
+// make TP exceed the number of gold relations and inflate recall.
 type goldRelInst struct {
 	typ      string
 	src, dst string
 	used     bool
 }
 
-// goldRelIndex はゴールドの関係を命題対から引くための索引。
+// goldRelIndex looks up gold relations by proposition pair.
 type goldRelIndex struct {
 	insts  []goldRelInst
 	byPair map[[2]string][]int
@@ -124,8 +124,8 @@ func newGoldRelIndex(rels []aif.Relation) *goldRelIndex {
 	return ix
 }
 
-// take は命題対 pair を結ぶ未消費のゴールド関係を 1 本取って消費する。
-// exact なら種別が typ のものだけを取る。そうでなければ種別を問わず、typ と同じものを優先する。
+// take takes and consumes one unconsumed gold relation connecting the proposition pair pair.
+// If exact, only relations of type typ are taken. Otherwise any type is taken, preferring typ.
 func (ix *goldRelIndex) take(pair [2]string, typ string, exact bool) (goldRelInst, bool) {
 	cand := ix.byPair[pair]
 	for _, i := range cand {
@@ -146,18 +146,18 @@ func (ix *goldRelIndex) take(pair [2]string, typ string, exact bool) (goldRelIns
 	return goldRelInst{}, false
 }
 
-// relOutcome は生成側の関係 1 本の照合結果。
+// relOutcome is the matching result for one generated relation.
 type relOutcome int
 
 const (
-	relSpurious relOutcome = iota // 正解に対応が無い（過剰生成）
-	relCorrect                    // 種別・向きとも一致
-	relMistyped                   // 向きは一致・種別が違う
-	relReversed                   // 向きが逆
+	relSpurious relOutcome = iota // no gold counterpart (over-generation)
+	relCorrect                    // type and direction both match
+	relMistyped                   // direction matches, type differs
+	relReversed                   // direction reversed
 )
 
-// newDistanceBuckets は全距離帯を 0 で初期化した表を返す。
-// 「その帯に 1 本も無かった」と「集計していない」を区別するため、先に全帯を作る。
+// newDistanceBuckets returns a table with every distance band initialized to 0.
+// All bands are created up front to distinguish "none in that band" from "not counted".
 func newDistanceBuckets() map[string]DistanceBucket {
 	out := make(map[string]DistanceBucket, len(aif.DistanceBands))
 	for _, b := range aif.DistanceBands {
@@ -175,7 +175,7 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 		return ""
 	}
 
-	// ゴールド側の関係を索引化する。1 本を 1 回だけ消費する。
+	// Index the gold relations. Each is consumed only once.
 	goldRelIx := newGoldRelIndex(gold.Relations())
 
 	score := RelationScore{
@@ -186,7 +186,7 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 	goldTotal := len(goldRelIx.insts)
 	score.GoldTotal = goldTotal
 
-	// 発話間距離。命題 → 発話位置はグラフごとに独立に求める。
+	// Inter-utterance distance. Proposition → utterance position is computed independently per graph.
 	predPos, goldPos := pred.PropositionOrder(), gold.PropositionOrder()
 	bandOf := func(pos map[string]int, a, b string) (string, bool) {
 		pa, ok1 := pos[a]
@@ -208,10 +208,10 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 		}
 	}
 
-	// ---- 生成側の関係を 1 本ずつ（前提ごとに）並べる ----
+	// ---- List generated relations one by one (per premise) ----
 	type predInst struct {
 		typ      string
-		ms, md   string // 対応先のゴールド命題（両端とも対応したときだけ意味を持つ）
+		ms, md   string // matched gold propositions (meaningful only when both ends matched)
 		mapped   bool
 		band     string
 		bandOK   bool
@@ -240,8 +240,8 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 			if dok {
 				p.ev.DstMatch = textOf(goldIx, md)
 			}
-			// 帯ごとの精度の分母は、端点が対応したかどうかに関係なく生成側の帯で数える。
-			// 対応しなかった関係（過剰生成）を分母から外すと、帯ごとの精度が過大になる。
+			// The denominator of per-band precision is counted by the generated-side band, whether or not the endpoints matched.
+			// Excluding unmatched relations (over-generation) from the denominator would inflate per-band precision.
 			if p.band, p.bandOK = bandOf(predPos, s, r.DstID); p.bandOK {
 				bucket := score.ByDistance[p.band]
 				bucket.PredTotal++
@@ -251,12 +251,12 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 		}
 	}
 
-	// ---- ゴールドとの照合（3 パス） ----
+	// ---- Match against the gold (3 passes) ----
 	//
-	// 先に処理した関係が別種別のゴールドを取ってしまうと、後の関係が完全一致できなくなる
-	// （同じ命題対に RA と CA を出したときなど）。処理順で結果が変わらないよう、
-	// 「完全一致」「向きは合うが種別違い」「向きが逆」の順に、パスごとに全件を照合する。
-	// これで厳密 TP・向きのみ TP・無向 TP の順に辞書式に最大になる。
+	// If an earlier relation takes a gold relation of a different type, a later relation can no longer match exactly
+	// (e.g. when RA and CA are emitted on the same proposition pair). So the result does not depend on processing order,
+	// every relation is matched per pass, in the order "exact", "direction matches but type differs", "direction reversed".
+	// This maximizes strict TP, direction-only TP and undirected TP lexicographically, in that order.
 	passes := []struct {
 		outcome relOutcome
 		take    func(p *predInst) (goldRelInst, bool)
@@ -276,7 +276,7 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 		}
 	}
 
-	// ---- 集計（生成側の順に） ----
+	// ---- Tally (in generated-side order) ----
 	var typedTP, untypedTP, undirectedTP int
 	for _, p := range insts {
 		e := p.ev
@@ -304,8 +304,8 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 		if typed {
 			typedTP++
 		}
-		// 当たりはゴールド側の帯（再現率用）と生成側の帯（精度用）の
-		// 両方に数える。片方だけだと分子と分母の帯が揃わない。
+		// Hits count in both the gold-side band (for recall) and the generated-side band (for precision).
+		// Counting only one would misalign the bands of numerator and denominator.
 		if p.bandOK {
 			bucket := score.ByDistance[p.band]
 			bucket.TPUndirectedPred++
@@ -326,7 +326,7 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 	predTotal := len(insts)
 	score.PredTotal = predTotal
 
-	// 取りこぼしたゴールドの関係（消費されなかったもの）。
+	// Missed gold relations (those not consumed).
 	reverse := map[string]string{}
 	for p, g := range matching {
 		reverse[g] = p
@@ -355,8 +355,8 @@ func relationScore(pred, gold aif.Graph, matching map[string]string, sim simTabl
 	score.Untyped = newPRF(untypedTP, predTotal-untypedTP, goldTotal-untypedTP)
 	score.Undirected = newPRF(undirectedTP, predTotal-undirectedTP, goldTotal-undirectedTP)
 
-	// 証拠を打ち切る前に、関係で結ばれた命題どうしの平均 cos を取る。
-	// 打ち切り後に取ると上位数件だけの平均になってしまう。
+	// Take the mean cos between propositions connected by relations before truncating the evidence.
+	// Taking it after truncation would average only the top few.
 	mean := func(in []RelationEvidence) (float64, int) {
 		if len(in) == 0 {
 			return 0, 0
@@ -386,12 +386,12 @@ func incr(m map[string]int, k string) map[string]int {
 	return m
 }
 
-// forceScore は対応付いた I-node について、それを illocute する YA のスキームを比べる。
+// forceScore compares, for matched I-nodes, the schemes of the YAs that illocute them.
 //
-// 比べるのは**発話（L-node）に anchor された** YA だけ。生成側は L→YA→I しか作らないので、
-// ゴールドの TA→YA→I（test で 4 本）を混ぜると、遷移の力（Arguing 等）と発話の力を比べてしまう。
-// 1 つの I-node に発話の YA が複数ある場合（言い直し・引用）は、最も早い発話の YA を採る
-// （PropositionOrder と同じ規則）。以前は Illocutions の並びで最後に見たものになっていた。
+// Only YAs **anchored to an utterance (L-node)** are compared. The generator only creates L→YA→I, so mixing in
+// gold TA→YA→I (4 in test) would compare transition forces (Arguing, etc.) against utterance forces.
+// When an I-node has multiple utterance YAs (restatements or quotes), the YA of the earliest utterance is used
+// (the same rule as PropositionOrder). Previously it was the last one seen in Illocutions order.
 func forceScore(pred, gold aif.Graph, matching map[string]string) ForceScore {
 	forceOf := func(g aif.Graph) map[string]string {
 		pos := map[string]int{}
@@ -461,7 +461,7 @@ func pairEvidence(pred, gold aif.Graph, matching map[string]string, sim simTable
 		return pairs, nil
 	}
 	best = pairs[:limit]
-	// 上位と下位が重ならないようにする（件数が少ないと同じ組が両方に出てしまう）。
+	// Keep the top and bottom from overlapping (with few items, the same pair would appear in both).
 	start := len(pairs) - limit
 	if start < limit {
 		start = limit

@@ -19,8 +19,8 @@ measurement bugs and their impact) are stated in the "Limitations" sections of e
 
 ### Scope of this repository
 
-This repository contains only the parts needed for this experiment, extracted from a parent
-project (a discussion-reproduction simulator, not public).
+This folder contains the parts of our discussion-support product (a discussion-reproduction
+simulator) that this experiment needs.
 
 **Included**
 
@@ -40,8 +40,8 @@ project (a discussion-reproduction simulator, not public).
 
 **Not included**
 
-- The parent project's retrieval, generation and CMS (Postgres / Redis / Neo4j / Qdrant / REST API /
-  frontend). This experiment uses none of them.
+- The product's retrieval, generation and CMS (Postgres / Redis / Neo4j / Qdrant / REST API /
+  frontend) are not part of this folder. This experiment uses none of them.
 - **The QT30 corpus text.** See "Data handling" below.
 
 ### Data handling (important)
@@ -134,7 +134,7 @@ This does not apply to the corpus you fetch (see "Data handling" above).
 
 ### このリポジトリの位置づけ
 
-親プロジェクト（議論再現シミュレータ。非公開）から、本実験に必要な部分だけを切り出したもの。
+議論支援プロダクト（議論再現シミュレータ）のうち、本実験に必要な部分をまとめたフォルダ。
 
 **含めたもの**
 
@@ -154,8 +154,8 @@ This does not apply to the corpus you fetch (see "Data handling" above).
 
 **含めなかったもの**
 
-- 親プロジェクトの検索・生成・CMS（Postgres / Redis / Neo4j / Qdrant / REST API / フロントエンド）。
-  本実験はこれらを一切使わない。
+- プロダクトの検索・生成・CMS（Postgres / Redis / Neo4j / Qdrant / REST API / フロントエンド）。
+  このフォルダには含めず、本実験もこれらを一切使わない。
 - **QT30 コーパスの本文**。下記「データの扱い」を参照。
 
 ### データの扱い（重要）

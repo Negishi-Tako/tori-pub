@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// スライドの例: S = 主張 c を p1 が支持し p2 が攻撃する。
+// The example from the slides: S = claim c, supported by p1 and attacked by p2.
 func uniform() Graph {
 	return Graph{
 		Props: []Prop{{ID: "c"}, {ID: "p1"}, {ID: "p2"}},
@@ -24,7 +24,7 @@ func TestExampleFromSlides(t *testing.T) {
 	s := uniform()
 	th := Current()
 
-	// A: 理由 p1 と支持の矢印を消す → 主張の欠落 1.0 + 辺の欠落 1.0。
+	// A: remove reason p1 and the support arrow → missing proposition 1.0 + missing edge 1.0.
 	a := Graph{Props: []Prop{{ID: "c"}, {ID: "p2"}}, Edges: []Edge{{From: "p2", To: "c", Kind: CA}}}
 	fa, err := Compute(s, a, identity, th)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestExampleFromSlides(t *testing.T) {
 		t.Fatalf("A: GED = %v, want 2.0 (phi=%v)", got, fa.Phi)
 	}
 
-	// B: 反論 p2 を支持に変える → 種別違い RA↔CA 0.75（消して足す 2.0 より安い）。
+	// B: turn rebuttal p2 into support → type mismatch RA↔CA 0.75 (cheaper than removing and adding, 2.0).
 	b := uniform()
 	b.Edges[1].Kind = RA
 	fb, err := Compute(s, b, identity, th)
@@ -45,7 +45,7 @@ func TestExampleFromSlides(t *testing.T) {
 		t.Fatalf("B: GED = %v, phi=%v", got, fb.Phi)
 	}
 
-	// 向きの反転は向き違い 1 回。
+	// Reversing direction is one direction mismatch.
 	r := uniform()
 	r.Edges[0] = Edge{From: "c", To: "p1", Kind: RA}
 	fr, _ := Compute(s, r, identity, th)
@@ -53,7 +53,7 @@ func TestExampleFromSlides(t *testing.T) {
 		t.Fatalf("reverse: phi=%v", fr.Phi)
 	}
 
-	// 関係のない辺を足すと余分 1 本。
+	// Adding an unrelated edge is one extra.
 	x := uniform()
 	x.Edges = append(x.Edges, Edge{From: "p1", To: "p2", Kind: MA})
 	fx, _ := Compute(s, x, identity, th)
@@ -74,7 +74,7 @@ func TestSubstitutionIsOneMinusCosAboveKnot(t *testing.T) {
 	}
 }
 
-// 線形化が一致すること: 同じ対応なら Cost(θ) は Compute(θ) の GED と同じ。
+// The linearization must agree: with the same matching, Cost(θ) equals the GED from Compute(θ).
 func TestFeaturesAreLinear(t *testing.T) {
 	s := uniform()
 	v := uniform()

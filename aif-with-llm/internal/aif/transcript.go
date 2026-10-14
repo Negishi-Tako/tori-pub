@@ -7,23 +7,23 @@ import (
 	"unicode"
 )
 
-// エピソード単位の書き起こしから、1 ノードセット分の区間を切り出す。
+// Excerpts one nodeset's span from a per-episode transcript.
 //
-// AIFdb のサブコーパスのアーカイブには、以前はノードセットごとの素テキスト（nodesetNNN.txt）が
-// 同梱されていたが、2026-10 時点ではエピソード単位の書き起こし（<shortname>.txt）1 本しか無い。
-// e2e 条件の入力と「素テキストがあるか」の判定にはノードセット単位のテキストが要るので、
-// ゴールドの L-node が書き起こしのどこにあるかを探し、その区間のターンを書き起こしの形のまま返す。
+// AIFdb subcorpus archives used to bundle per-nodeset raw text (nodesetNNN.txt),
+// but as of 2026-10 there is only one per-episode transcript (<shortname>.txt).
+// The e2e condition's input and the "has raw text" check need per-nodeset text, so we
+// find where the gold L-nodes occur in the transcript and return the turns in that span, in transcript form.
 //
-// 書き起こしの形は次のとおり（ターンの間に「Part 1」「Words: 273」等の雑音行が混ざる）:
+// The transcript looks like this (noise lines such as "Part 1" and "Words: 273" appear between turns):
 //
 //	Claire Cooper
 //	[0:01:27] Hello. Even if some children do get back to school ...
 //
-// 返すテキストも同じ形（話者の行 + 「[時刻] 本文」の行）で、最初と最後のターンの本文は
-// 区間の端で切る。切り出しは元の nodesetNNN.txt とバイト単位で一致する保証は無いので、
-// Document.TextSource に由来を残す。
+// The returned text has the same form (a speaker line + a "[time] text" line), with the text of the
+// first and last turns cut at the span edges. The excerpt is not guaranteed to match the original
+// nodesetNNN.txt byte for byte, so its origin is recorded in Document.TextSource.
 
-// transcriptTurn は書き起こしの 1 ターン。
+// transcriptTurn is one turn of a transcript.
 type transcriptTurn struct {
 	Speaker string
 	Stamp   string
@@ -32,15 +32,15 @@ type transcriptTurn struct {
 
 var (
 	turnStampRe = regexp.MustCompile(`^\[(\d+:)?\d{1,2}:\d{2}\]\s*`)
-	// noiseLineRe は書き起こしに混ざる本文でない行（パート見出し・語数・時刻だけの行・絵文字の短縮名）。
+	// noiseLineRe matches non-text lines mixed into transcripts (part headings, word counts, time-only lines, emoji short names).
 	noiseLineRe = regexp.MustCompile(`^(Part \d+|Words: \d+|\d{1,2}:\d{2}|[a-z0-9_+-]+)$`)
 )
 
-// parseTranscript は書き起こしをターンに分ける。
+// parseTranscript splits a transcript into turns.
 //
-// 「[時刻] 本文」の行がターンの始まりで、その直前の空でない行が話者。1 ターンの本文は
-// 段落をまたぐことがあり（時刻の付かない続きの行）、それも本文に含める。
-// 次のターンの話者の行（直後が「[時刻]」の行）と雑音行は本文に含めない。
+// A "[time] text" line starts a turn, and the non-empty line just before it is the speaker. A turn's text
+// may span paragraphs (continuation lines without a time), and those are included in the text.
+// The next turn's speaker line (one directly followed by a "[time]" line) and noise lines are not included.
 func parseTranscript(text string) []transcriptTurn {
 	var lines []string
 	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
@@ -64,7 +64,7 @@ func parseTranscript(text string) []transcriptTurn {
 				Body:    line[loc[1]:],
 			})
 		case isStamp(i + 1), noiseLineRe.MatchString(line), len(turns) == 0:
-			// 次のターンの話者・雑音・最初のターンより前の行
+			// the next turn's speaker, noise, or lines before the first turn
 		default:
 			turns[len(turns)-1].Body += " " + line
 		}
@@ -72,11 +72,11 @@ func parseTranscript(text string) []transcriptTurn {
 	return turns
 }
 
-// normIndex は本文を英数字だけの小文字列に正規化したものと、その各文字の元の位置。
+// normIndex is the text normalized to lowercase alphanumerics only, along with each character's original position.
 type normIndex struct {
 	text []rune
-	turn []int // 正規化後の各文字が属するターン
-	off  []int // そのターンの本文中のバイト位置
+	turn []int // turn each normalized character belongs to
+	off  []int // byte offset within that turn's text
 }
 
 func normalizeForSearch(s string) string {
@@ -103,23 +103,23 @@ func indexTurns(turns []transcriptTurn) normIndex {
 	return ix
 }
 
-// 発話を書き起こしの中で探すときの鍵の長さ。短すぎる鍵（"Yes" 等）は一意に定まらないので使わない。
+// Key length for finding utterances in the transcript. Keys that are too short ("Yes", etc.) are not unique, so they are not used.
 const (
 	minLocateKey = 12
 	maxLocateKey = 40
-	// maxLocateGap は、同じノードセットの発話とみなす一致位置どうしの最大の間隔（正規化後の文字数）。
-	// 見つからない発話が 10 個以上続いても切れない長さにしてある。
+	// maxLocateGap is the maximum gap (in normalized characters) between match positions considered part of the same nodeset.
+	// It is long enough not to break even if 10 or more consecutive utterances are not found.
 	maxLocateGap = 3000
 )
 
-// ExcerptTranscript は episode（エピソードの書き起こし）から、g の L-node が出てくる区間を切り出す。
+// ExcerptTranscript excerpts the span of episode (the episode transcript) in which g's L-nodes occur.
 //
-// 各 L-node の本文（話者を除く）を書き起こしの中で探し、一意に見つかったものの最初から最後までを区間とする。
-// L-node の本文はアノテータが書き起こしの誤りを直していることがあり（"Fog fog …" 等）、
-// 逐語で見つかるのは test で 1,903 個中 1,767 個である。見つからない発話は区間の内側にあれば
-// 切り出しに含まれる（test では L-node の先頭 20 字の 97% が切り出しの中に現れる）。
-// 1 つも見つからないときだけ ok=false を返す。located / total は区間の根拠にした L-node の数と総数で、
-// 呼び出し側はこれを記録に残す（どれだけ確かな切り出しかを後から確かめられるように）。
+// It looks up each L-node's text (without the speaker) in the transcript and takes the span from the first to the last unique match.
+// Annotators sometimes corrected transcription errors in L-node text ("Fog fog …", etc.),
+// so 1,767 of 1,903 are found verbatim in test. Utterances not found are included in the excerpt
+// if they fall inside the span (in test, 97% of the first 20 characters of L-nodes appear in the excerpt).
+// ok=false is returned only when none are found. located / total are the number of L-nodes the span is based on
+// and the total; callers record them (so how reliable the excerpt is can be checked later).
 func ExcerptTranscript(episode string, g Graph) (text string, located, total int, ok bool) {
 	turns := parseTranscript(episode)
 	if len(turns) == 0 {
@@ -127,7 +127,7 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 	}
 	ix := indexTurns(turns)
 	hay := string(ix.text)
-	// strings.Index はバイト位置を返すので、rune 位置に直す表を作る（英数字以外は落としてあるが非 ASCII の文字は残る）。
+	// strings.Index returns byte offsets, so build a table to convert to rune offsets (non-alphanumerics are dropped, but non-ASCII characters remain).
 	byteToRune := make(map[int]int, len(ix.text))
 	bpos := 0
 	for i, r := range ix.text {
@@ -135,7 +135,7 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 		bpos += len(string(r))
 	}
 
-	type span struct{ start, end int } // rune 位置、end は含まない
+	type span struct{ start, end int } // rune offsets; end is exclusive
 	var spans []span
 	locs := g.NodesOfType(TypeL)
 	total = len(locs)
@@ -160,7 +160,7 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 		}
 		start := byteToRune[strings.Index(hay, probe)]
 		end := start + len([]rune(probe))
-		// 本文全体がそのまま続いていれば、終わりも本文の末尾まで伸ばす。
+		// If the whole text continues as-is, extend the end to the end of the text as well.
 		if full := []rune(key); start+len(full) <= len(ix.text) && string(ix.text[start:start+len(full)]) == key {
 			end = start + len(full)
 		}
@@ -169,9 +169,9 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 	if total == 0 || len(spans) == 0 {
 		return "", 0, total, false
 	}
-	// 一意に見つかった位置のうち、互いに近いもののまとまりで最大のものだけを区間にする。
-	// 発話の言い回しがエピソードの別の箇所とたまたま一致すると、区間が数千字先まで伸びてしまうため
-	// （test の 17975 では 1 件が 8,000 字離れた箇所に一致していた）。
+	// Of the unique match positions, use only the largest cluster of positions close to each other as the span.
+	// If an utterance's wording happens to match elsewhere in the episode, the span would stretch thousands of characters
+	// (in test 17975, one item matched a place 8,000 characters away).
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 	bestLo, bestHi := 0, 1
 	for lo := 0; lo < len(spans); {
@@ -205,7 +205,7 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 		}
 		if ti == te {
 			hi = lastRuneOff + len(string([]rune(body[lastRuneOff:])[0]))
-			// 文末の句読点（. ? !）は区間に含める。発話の切れ目の手がかりになるため。
+			// Include sentence-final punctuation (. ? !) in the span, as a hint for utterance boundaries.
 			for hi < len(body) && strings.ContainsRune(".?!\"'", rune(body[hi])) {
 				hi++
 			}
@@ -222,14 +222,14 @@ func ExcerptTranscript(episode string, g Graph) (text string, located, total int
 	return b.String(), located, total, true
 }
 
-// speakerPrefixRe は L-node の本文の先頭にある「話者:」（" : " でなく ": " で区切った形）。
+// speakerPrefixRe matches a leading "speaker:" in L-node text (separated by ": " rather than " : ").
 var speakerPrefixRe = regexp.MustCompile(`^[A-Z][^:]{0,58}:\s+`)
 
-// locutionBodies は L-node の本文から話者を除いた候補を、確からしい順に返す。
+// locutionBodies returns candidate texts of an L-node with the speaker removed, most likely first.
 //
-// AIFdb の L-node は「話者 : 本文」が基本だが、「話者: 本文」や、アノテータ名を前に付けた
-// 「アノテータ: 話者 : 本文」もある。探索にだけ使うので、外しすぎた候補も並べてよい
-// （一意に見つかったものだけを採る）。
+// AIFdb L-nodes are usually "speaker : text", but there are also "speaker: text" and
+// "annotator: speaker : text" with the annotator's name prefixed. These are used only for searching,
+// so over-stripped candidates may be listed too (only unique matches are taken).
 func locutionBodies(n Node) []string {
 	body := n.Text
 	if sp := SpeakerOf(n); sp != "" && strings.HasPrefix(body, sp) {

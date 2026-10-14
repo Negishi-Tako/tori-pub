@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// 論文の数値が公開した集計値から再現できること（Holm は 5 比較の族に掛ける）。
+// The paper's numbers must be reproducible from the published aggregates (Holm applies to the family of 5 comparisons).
 func TestPaperStatsReproducesPaper(t *testing.T) {
 	tbl, err := loadPaperMetrics(filepath.Join("..", "..", paperMetricsDir))
 	if err != nil {
@@ -16,7 +16,7 @@ func TestPaperStatsReproducesPaper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 論文には 3 桁に丸めて載せている。
+	// The paper reports values rounded to 3 digits.
 	want := []struct{ diff, lo, hi, holm float64 }{
 		{+0.0478, +0.0127, +0.0830, 0.0070}, // A − K, undirected F1
 		{+0.1107, +0.0731, +0.1499, 0.0000}, // E − A, strict F1
@@ -37,7 +37,7 @@ func TestPaperStatsReproducesPaper(t *testing.T) {
 	}
 }
 
-// 大きいモデルの比較（60 件、補正なし）も論文の数値と一致すること。
+// The larger-model comparison (60 items, uncorrected) must also match the paper's numbers.
 func TestPaperStatsLargerModel(t *testing.T) {
 	tbl, err := loadPaperMetrics(filepath.Join("..", "..", paperMetricsDir))
 	if err != nil {

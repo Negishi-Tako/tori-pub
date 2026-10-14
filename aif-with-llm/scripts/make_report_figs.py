@@ -1,8 +1,8 @@
-"""学会レポート用の図を results.jsonl から直接生成する。
+"""Generate the figures for the conference report directly from results.jsonl.
 
-数値を手で書き写すと本文と図がずれるので、必ず実験結果から引く。
-配色・フォントは docs/figures/make_figures.py を踏襲。
-出力先は docs/figures/rep*.png。
+Copying numbers by hand lets the text and figures drift apart, so always pull them from the experiment results.
+Colors and fonts follow docs/figures/make_figures.py.
+Output goes to docs/figures/rep*.png.
 """
 import json
 import os
@@ -72,7 +72,7 @@ IDS = set(g3["baseline"])
 for k in CORE:
     IDS &= set(g3[k])
 IDS = sorted(IDS)
-IDS77 = IDS  # c1 も全件揃ったので共通集合は 1 つ
+IDS77 = IDS  # c1 is now complete too, so there is a single common set
 print(f"n={len(IDS)} / c1 を含む n={len(IDS77)}")
 
 
@@ -100,7 +100,7 @@ def label(cond):
     }[cond]
 
 
-# ============ 図1: 指標の版で結論が反転する ============
+# ============ Figure 1: the conclusion flips depending on the metric version ============
 fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.5))
 conds = ["baseline", "gold-loc@adj/5.6-luna", "gold-loc@v3/5.6-luna", "gold-loc@w1/5.6-luna"]
 names = ["基準線①\n関係なし", "基準線②\n隣接を全部", "v3", "w1"]
@@ -128,7 +128,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.93])
 fig.savefig(f"{OUT}/rep_fig1_normalization.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
-# ============ 図2: 条件別の AP / AR ============
+# ============ Figure 2: AP / AR by condition ============
 fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.6))
 sets = [(IDS, ["baseline", "gold-loc@adj/5.6-luna", "gold-loc@v3/5.6-luna",
                "gold-loc@w1/5.6-luna", "gold-loc@g1/5.6-luna"], f"全条件（n={len(IDS)}）"),
@@ -162,7 +162,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.93])
 fig.savefig(f"{OUT}/rep_fig2_precision_recall.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
-# ============ 図3: 誤りの内訳 ============
+# ============ Figure 3: breakdown of errors ============
 v = [g3["gold-loc@v3/5.6-luna"][i] for i in IDS]
 GOLD = sum(c["relations"]["gold_total"] for c in v)
 PRED = sum(c["relations"]["pred_total"] for c in v)
@@ -204,7 +204,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.9])
 fig.savefig(f"{OUT}/rep_fig3_error_budget.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
-# ============ 図4: 距離帯ごとの再現率 ============
+# ============ Figure 4: recall by distance band ============
 B = ["1", "2-4", "5-9", "10+"]
 fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.3))
 show = [("gold-loc@v3/5.6-luna", S2, "v3（生成方式）"),
@@ -258,7 +258,7 @@ GRADE_DIST = grade_dist("out/aif-n124-g1/graphs/*gold-loc@g1*.json", ["5", "4", 
 print("c1 等級分布:", [(k, round(v, 1)) for k, v in CONF_DIST])
 print("g1 等級分布:", [(k, round(v, 1)) for k, v in GRADE_DIST])
 
-# ============ 図5: 等級の閾値と P/R のトレードオフ ============
+# ============ Figure 5: grade thresholds and the P/R trade-off ============
 fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.4))
 ax = axes[0]
 curves = {
@@ -318,7 +318,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.93])
 fig.savefig(f"{OUT}/rep_fig5_threshold.png", dpi=200, bbox_inches="tight")
 plt.close(fig)
 
-# ============ 図6: 命題 F1 の閾値依存 ============
+# ============ Figure 6: threshold dependence of proposition F1 ============
 ths = sorted(g3["baseline"][IDS[0]]["propositions"]["f1_by_threshold"], key=float)
 fig, ax = plt.subplots(figsize=(6.6, 3.3))
 for cond, col, lab, ls in [("baseline", NEUT, "基準線①（発話をそのまま命題とする）", "--"),

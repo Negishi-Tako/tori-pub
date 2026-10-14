@@ -30,7 +30,7 @@ type pilotOptions struct {
 	lambda, m     float64
 	out           string
 	budget        float64
-	// verify は書き下しの検証つきの手順（realize_v2 + verify_v1、T3 の割り付け）を使う。
+	// verify uses the procedure with verification of the realizations (realize_v2 + verify_v1, T3 allocation).
 	verify bool
 }
 
@@ -52,7 +52,7 @@ var (
 	}
 )
 
-// meter は API の費用を数え、上限を超えたら以降の呼び出しを止める。
+// meter counts API spending and stops further calls once the cap is exceeded.
 type meter struct {
 	mu     sync.Mutex
 	limit  float64
@@ -120,12 +120,12 @@ type pilotTriplet struct {
 	EditsB []perturb.Edit      `json:"edits_b"`
 	StatA  synth.RealizeStats  `json:"realize_a"`
 	StatB  synth.RealizeStats  `json:"realize_b"`
-	Raw    []string            `json:"judge_raw"` // 提示順 +1, −1 の生の回答
-	// Unrealized は、命題グラフを変える編集があるのにテキストが元の議論と同じ変種を含むこと。
+	Raw    []string            `json:"judge_raw"` // raw answers for presentation order +1, −1
+	// Unrealized means a variant is included whose text equals the source argument despite edits that change the proposition graph.
 	Unrealized bool   `json:"unrealized"`
 	Err        string `json:"error,omitempty"`
 
-	// 以下は検証つきの手順（-verify）だけで埋まる。
+	// The following are filled only by the procedure with verification (-verify).
 	Replans    int          `json:"replans,omitempty"`
 	NearTarget *bool        `json:"near_target,omitempty"`
 	PredDelta  float64      `json:"pred_delta,omitempty"`
@@ -135,7 +135,7 @@ type pilotTriplet struct {
 
 func runPilot(o pilotOptions) error {
 	_ = godotenv.Load(".env")
-	_ = godotenv.Load("../aif-with-llm/.env") // 前実験の .env（OpenAI のキー）を流用する
+	_ = godotenv.Load("../aif-with-llm/.env") // reuse the previous experiment's .env (OpenAI key)
 	key := os.Getenv("OPENAI_API_KEY")
 	if key == "" {
 		return errors.New("pilot: OPENAI_API_KEY が無い")
@@ -170,7 +170,7 @@ func runPilot(o pilotOptions) error {
 	mt := &meter{limit: o.budget, byTag: map[string]llm.Usage{}, calls: map[string]int{}, cached: map[string]int{}}
 	rng := rand.New(rand.NewPCG(o.seed, 0xb11d))
 
-	// ---- G1 元の議論 ----
+	// ---- G1 source arguments ----
 	specs := make([]synth.Spec, o.sources)
 	for i := range specs {
 		f := formats[rng.IntN(len(formats))]
@@ -213,10 +213,10 @@ func runPilot(o pilotOptions) error {
 	var trips []*pilotTriplet
 	var vstats *verifyStats
 	if o.verify {
-		// ---- G2〜G4 編集計画・書き下し・検証（枠ごと）----
+		// ---- G2–G4 edit plan, realization, verification (per slot) ----
 		trips, vstats = buildVerified(ctx, g, mt, sources, srcErr, rng, o.seed)
 	} else {
-		// ---- G2 編集計画 ----
+		// ---- G2 edit plan ----
 		for i, src := range sources {
 			if srcErr[i] != nil {
 				continue
@@ -237,7 +237,7 @@ func runPilot(o pilotOptions) error {
 			}
 		}
 
-		// ---- G3 書き下し ----
+		// ---- G3 realization ----
 		parallel(len(trips), 8, func(i int) error {
 			t := trips[i]
 			src := sources[t.Source]
@@ -264,7 +264,7 @@ func runPilot(o pilotOptions) error {
 	}
 	fmt.Fprintf(os.Stderr, "realized, cost $%.3f\n", mt.total())
 
-	// ---- 埋め込み（命題の cos）----
+	// ---- Embeddings (proposition cos) ----
 	textSet := map[string]bool{}
 	for _, s := range sources {
 		for _, p := range s.Graph.Props {
@@ -312,7 +312,7 @@ func runPilot(o pilotOptions) error {
 		return func(a, b string) float64 { return table[[2]string{a, b}] }
 	}
 
-	// ---- J 判定（提示順 2 通り）----
+	// ---- J judgments (2 presentation orders) ----
 	parallel(len(trips), 8, func(i int) error {
 		t := trips[i]
 		if t.Err != "" {
@@ -352,7 +352,7 @@ func runPilot(o pilotOptions) error {
 		}
 	}
 
-	// ---- 推定 ----
+	// ---- Estimation ----
 	var ft []fit.Triplet
 	var js []fit.Judgment
 	var kept []*pilotTriplet
@@ -400,7 +400,7 @@ func runPilot(o pilotOptions) error {
 	for i, t := range kept {
 		types[i] = t.Type
 		if t.Type == perturb.T1Monotone && math.Abs(d0[i]) > 1e-9 {
-			sign[i] = 1 // A の編集 ⊂ B の編集なので、A が近いのが正解
+			sign[i] = 1 // A's edits ⊂ B's edits, so A being closer is correct
 		}
 		neg[i] = ft[i].NegDiff != 0
 	}
@@ -409,7 +409,7 @@ func runPilot(o pilotOptions) error {
 		return err
 	}
 
-	// 機械検査で書き下しの失敗を含む三つ組を除いた場合（計画 G4 の代わりの簡易検査）。
+	// Excluding triplets whose realization failed a mechanical check (a simple check in place of plan G4).
 	var keepIdx []int
 	for i, t := range kept {
 		if !t.Unrealized {
@@ -436,7 +436,7 @@ func runPilot(o pilotOptions) error {
 		neg2[i] = ft2[i].NegDiff != 0
 	}
 
-	// ---- 報告 ----
+	// ---- Report ----
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# PoC: %s で通しの実行（元の議論 %d 件）\n", model, o.sources)
 	fmt.Fprintf(&b, "\n- 元の議論: %d/%d 件を生成（構造の検査に通ったもの）\n", okSrc, o.sources)
@@ -569,17 +569,17 @@ func writeCostProjection(b *bytes.Buffer, mt *meter) {
 	fmt.Fprintf(b, "| G1 元の議論の生成 | %.0f / %.0f | 1.5k / 5k |\n", si, so)
 	fmt.Fprintf(b, "| G3 書き下し | %.0f / %.0f | 4k / 3k |\n", ri, ro)
 	fmt.Fprintf(b, "| J 判定 | %.0f / %.0f | 4.5k / 1.5k |\n", ji, jo)
-	// 第 1 段（1,000 三つ組）の費用を実測トークンで置き換えて見積もる（§10.1 の回数）。
+	// Estimate the cost of stage 1 (1,000 triplets) using measured tokens (call counts from §10.1).
 	price := map[string][2]float64{
 		"luna":   {0.20, 1.20},
-		"sonnet": {1.0, 5.0}, // Sonnet 5.5 のバッチ単価（$2 / $10 の半額）
-		"haiku":  {0.5, 2.5}, // Haiku 4.5 のバッチ単価（$1 / $5 の半額）
+		"sonnet": {1.0, 5.0}, // Sonnet 5.5 batch price (half of $2 / $10)
+		"haiku":  {0.5, 2.5}, // Haiku 4.5 batch price (half of $1 / $5)
 	}
 	cost := func(model string, n float64, in, out float64) float64 {
 		p := price[model]
 		return n * (in*p[0] + out*p[1]) / 1e6
 	}
-	// 検証（G1・G4）は書き下しと同程度の入力・生成の 1/2 の出力と仮定する。
+	// Verification (G1, G4) is assumed to take about the same input as realization and 1/2 the output.
 	luna := cost("luna", 120, si, so) + cost("luna", 120+1100, ri, ro/2) + cost("luna", 1100, ri, ro) + cost("luna", 2000, ji, jo)
 	sonnet := cost("sonnet", 120, si, so) + cost("sonnet", 120+1100, ri, ro/2) + cost("sonnet", 1100, ri, ro) + cost("sonnet", 2000, ji, jo)
 	haiku := cost("haiku", 2000, ji, jo)
@@ -617,9 +617,9 @@ func writeTypeBreakdown(b *bytes.Buffer, kept []*pilotTriplet, js []fit.Judgment
 	}
 }
 
-// writeProfiles は値段を 1 つずつ動かしたときの対数尤度を書き出す。
-// slice は他のパラメータを推定値に固定した切り口、profile は他を当てはめ直したプロファイル尤度。
-// どちらも各点で命題の対応を解き直す（本物の GED での値）。
+// writeProfiles writes the log-likelihood as each price is varied one at a time.
+// slice fixes the other parameters at their estimates; profile refits the others (profile likelihood).
+// Both re-solve the proposition matching at each point (values under the real GED).
 func writeProfiles(path string, ft []fit.Triplet, js []fit.Judgment, opts fit.Options, est fit.Params) error {
 	var b bytes.Buffer
 	b.WriteString("param,value,slice_loglik,profile_loglik,assign_changes\n")
@@ -667,7 +667,7 @@ func changesGraph(es []perturb.Edit) bool {
 	return false
 }
 
-// pick は idx の三つ組だけを残し、判定の添字を付け直す。
+// pick keeps only the triplets in idx and renumbers the judgment indices.
 func pick(ft []fit.Triplet, js []fit.Judgment, idx []int) ([]fit.Triplet, []fit.Judgment) {
 	pos := map[int]int{}
 	var out []fit.Triplet

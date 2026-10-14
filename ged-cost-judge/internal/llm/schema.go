@@ -10,24 +10,24 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-// SchemaFor は Go の型から Structured Outputs 用の JSON Schema を生成する。
+// SchemaFor generates a JSON Schema for Structured Outputs from a Go type.
 //
-// OpenAI の strict モードには次の制約があるため、生成後に整形している:
-//   - すべての object に "additionalProperties": false が必要
-//   - object の全プロパティが "required" に列挙されていなければならない
-//     （Go 側で省略可能にしたいフィールドは型を union にするのではなく、
-//     "値が無ければ空文字/0 を入れる" 運用にする方が事故が少ない）
-//   - $ref / $defs は使えるが、ここでは DoNotReference で展開して単純化する
+// OpenAI's strict mode has the following constraints, so the schema is reshaped after generation:
+//   - every object needs "additionalProperties": false
+//   - every property of an object must be listed in "required"
+//     (for fields you want to be optional on the Go side, it is less error-prone to
+//     "put an empty string/0 when there is no value" than to make the type a union)
+//   - $ref / $defs can be used, but here DoNotReference expands them for simplicity
 func SchemaFor[T any](name, description string) (*Schema, error) {
 	if name == "" {
 		return nil, fmt.Errorf("llm: schema name is empty")
 	}
 	r := &jsonschema.Reflector{
-		// LLM に渡すので参照を展開して読みやすくする。
+		// Expand references for readability, since this is passed to the LLM.
 		DoNotReference: true,
-		// 追加プロパティを禁止する（strict モードの要件）。
+		// Forbid additional properties (a strict mode requirement).
 		AllowAdditionalProperties: false,
-		// title / description は残す。examples 等の余計なキーは付けない。
+		// Keep title / description. Do not add extra keys such as examples.
 		ExpandedStruct: true,
 	}
 	var zero T
@@ -51,9 +51,9 @@ func SchemaFor[T any](name, description string) (*Schema, error) {
 	return &Schema{Name: name, Description: description, Strict: true, JSON: out}, nil
 }
 
-// strictify は OpenAI strict モードの制約を満たすようスキーマを再帰的に整形する。
+// strictify recursively reshapes the schema to satisfy OpenAI strict mode constraints.
 func strictify(node map[string]any) {
-	// $defs も含めて子を先に処理する。
+	// Process children first, including $defs.
 	for _, key := range []string{"$defs", "definitions", "properties", "patternProperties"} {
 		if child, ok := node[key].(map[string]any); ok {
 			for _, v := range child {
@@ -90,7 +90,7 @@ func strictify(node map[string]any) {
 	for k := range props {
 		required = append(required, k)
 	}
-	// 順序を固定しないとスキーマのハッシュが揺れてキャッシュが無効化する。
+	// Without a fixed order, the schema hash wobbles and invalidates the cache.
 	slices.Sort(required)
 	node["required"] = toAnySlice(required)
 }
@@ -100,14 +100,14 @@ func typeOf(node map[string]any) string {
 	case string:
 		return t
 	case []any:
-		// ["object","null"] のような union。object を含むなら object 扱い。
+		// A union such as ["object","null"]. If it includes object, treat it as object.
 		for _, v := range t {
 			if s, ok := v.(string); ok && s == "object" {
 				return "object"
 			}
 		}
 	}
-	// type 未指定でも properties があれば object とみなす。
+	// Even without a type, treat it as object if it has properties.
 	if _, ok := node["properties"]; ok {
 		return "object"
 	}
@@ -122,10 +122,10 @@ func toAnySlice(s []string) []any {
 	return out
 }
 
-// CompleteJSON は T のスキーマで Structured Outputs を強制し、結果を T に復元する。
+// CompleteJSON forces Structured Outputs with T's schema and decodes the result into T.
 //
-// req.Schema が既に設定されていればそれを尊重する（プロンプト実験で手書きスキーマを
-// 使いたい場合のため）。name は英数と _ - のみ、64 文字以内。
+// If req.Schema is already set, it is respected (for prompt experiments that want a
+// hand-written schema). name may contain only alphanumerics and _ -, up to 64 characters.
 func CompleteJSON[T any](ctx context.Context, c Client, req Request, name, description string) (T, *Response, error) {
 	var out T
 	if req.Schema == nil {

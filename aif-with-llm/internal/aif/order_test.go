@@ -7,8 +7,8 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/aif"
 )
 
-// orderGraph は L-node を ids の順（JSON の並び）に置き、tas の (from, to) で TA を張る。
-// stamps が非 nil なら L-node にタイムスタンプを付ける。
+// orderGraph places L-nodes in the order of ids (the JSON order) and adds TAs for each (from, to) in tas.
+// If stamps is non-nil, L-nodes get timestamps.
 func orderGraph(ids []string, tas [][2]string, stamps map[string]string) aif.Graph {
 	g := aif.Graph{ID: "o"}
 	for _, id := range ids {
@@ -30,9 +30,9 @@ func idsOf(nodes []aif.Node) []string {
 	return out
 }
 
-// TA が合流するとき（A→C と B→C）、合流先は両方の後に来ること。
-// 以前の実装は A→C だけをたどって C を A の直後に置き、B を末尾に回していた
-// （test の 17919: 司会の質問と "There are thousands of head teachers…" が同じ応答に TA を張っている）。
+// When TAs merge (A→C and B→C), the merge target must come after both.
+// The previous implementation followed only A→C, put C right after A and pushed B to the end
+// (test 17919: the moderator's question and "There are thousands of head teachers…" both have TAs to the same reply).
 func TestLocutionOrderRespectsAllTransitions(t *testing.T) {
 	g := orderGraph([]string{"A", "B", "C"}, [][2]string{{"A", "C"}, {"B", "C"}}, nil)
 	if got := idsOf(g.LocutionOrder()); !slices.Equal(got, []string{"A", "B", "C"}) {
@@ -40,7 +40,7 @@ func TestLocutionOrderRespectsAllTransitions(t *testing.T) {
 	}
 }
 
-// TA が分岐するとき（A→B と A→C、B→C）も、すべての TA の向きを守ること。
+// When TAs branch (A→B and A→C, B→C), the direction of every TA must still be respected.
 func TestLocutionOrderHandlesBranching(t *testing.T) {
 	g := orderGraph([]string{"A", "C", "B"}, [][2]string{{"A", "C"}, {"A", "B"}, {"B", "C"}}, nil)
 	if got := idsOf(g.LocutionOrder()); !slices.Equal(got, []string{"A", "B", "C"}) {
@@ -48,7 +48,7 @@ func TestLocutionOrderHandlesBranching(t *testing.T) {
 	}
 }
 
-// TA で順序の決まらない発話どうしは、タイムスタンプで並べること（同じなら JSON の並び）。
+// Utterances not ordered by TAs must be ordered by timestamp (then by JSON order if equal).
 func TestLocutionOrderBreaksTiesByTimestamp(t *testing.T) {
 	stamps := map[string]string{"A": "2020-05-28 19:24:31", "X": "2020-05-28 19:24:30", "B": "2020-05-28 19:24:32"}
 	g := orderGraph([]string{"A", "B", "X"}, [][2]string{{"A", "B"}}, stamps)
@@ -57,7 +57,7 @@ func TestLocutionOrderBreaksTiesByTimestamp(t *testing.T) {
 	}
 }
 
-// TA が循環していても全 L-node を 1 回ずつ返すこと（無限ループ・欠落にしない）。
+// Even when TAs form a cycle, every L-node must be returned exactly once (no infinite loop or omission).
 func TestLocutionOrderSurvivesCycles(t *testing.T) {
 	g := orderGraph([]string{"A", "B", "C"}, [][2]string{{"A", "B"}, {"B", "C"}, {"C", "A"}}, nil)
 	got := idsOf(g.LocutionOrder())
@@ -67,8 +67,8 @@ func TestLocutionOrderSurvivesCycles(t *testing.T) {
 	}
 }
 
-// 1 つの I-node が複数の発話に anchor されているとき、最も早い発話の位置を採ること
-// （ノードの並び順に依存しない）。
+// When one I-node is anchored to multiple utterances, the earliest utterance's position must be used
+// (independent of node order).
 func TestPropositionOrderUsesEarliestAnchor(t *testing.T) {
 	for _, reverse := range []bool{false, true} {
 		g := orderGraph([]string{"L0", "L1", "L2"}, [][2]string{{"L0", "L1"}, {"L1", "L2"}}, nil)
@@ -90,7 +90,7 @@ func TestPropositionOrderUsesEarliestAnchor(t *testing.T) {
 	}
 }
 
-// AnchorNodes / AnchorEdges（GED 0.4 の全体グラフ）には TA とそれに付く辺が入らないこと。
+// AnchorNodes / AnchorEdges (the overall graph of GED 0.4) must not include TAs or their edges.
 func TestAnchorGraphExcludesTransitions(t *testing.T) {
 	g := aif.BaselineGraph("b", []aif.LocutionInput{{Speaker: "A", Text: "x"}, {Speaker: "B", Text: "y"}})
 	for _, n := range g.AnchorNodes() {

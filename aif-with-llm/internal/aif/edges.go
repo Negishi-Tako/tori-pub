@@ -2,18 +2,18 @@ package aif
 
 import "strconv"
 
-// LabeledEdge は辺に「両端のノード種別から決まる意味」を名前として付けたもの。
+// LabeledEdge is an edge labeled with the meaning determined by its endpoint node types.
 //
-// AIF の辺は種別を持たず、両端の種別で意味が決まる。GED で辺の一致を数えるには
-// 意味まで揃っている必要があるので、ここで両端の種別から機械的に名前を付ける。
-// 情報は増えも減りもしない。
+// AIF edges have no type; their meaning is determined by the endpoint types. Counting edge matches
+// in GED requires the meaning to match as well, so names are assigned mechanically from the endpoint types here.
+// No information is added or lost.
 type LabeledEdge struct {
 	FromID string
 	ToID   string
 	Kind   string
 }
 
-// 辺の種別名。値は GED の一致判定にだけ使う（同じ値なら同じ意味の辺）。
+// Edge kind names. Values are used only for GED matching (same value means an edge with the same meaning).
 const (
 	edgeAnchors       = "ANCHORS"        // L / TA -> YA
 	edgeIllocutes     = "ILLOCUTES"      // YA -> I / S-node
@@ -27,7 +27,7 @@ const (
 	edgeLeadsTo       = "LEADS_TO"       // TA -> L
 )
 
-// relationEdgeKind は関係（S-node）を命題間の辺 1 本に畳んだときの種別名。
+// relationEdgeKind is the kind name of a relation (S-node) folded into a single edge between propositions.
 var relationEdgeKind = map[NodeType]string{
 	TypeRA: "support",
 	TypeCA: "attack",
@@ -60,12 +60,12 @@ func edgeKind(from, to NodeType) (string, bool) {
 	return "", false
 }
 
-// LabeledEdges は全ノードを残したまま、すべての辺に種別名を付けて返す。
+// LabeledEdges returns all edges with kind names, keeping every node.
 func (g Graph) LabeledEdges() []LabeledEdge {
 	return g.labeledEdges(nil)
 }
 
-// labeledEdges は keep に含まれるノード同士の辺だけを、種別名を付けて返す。keep が nil なら全辺。
+// labeledEdges returns, with kind names, only the edges between nodes in keep. A nil keep means all edges.
 func (g Graph) labeledEdges(keep map[string]bool) []LabeledEdge {
 	ix := NewIndex(g)
 	out := make([]LabeledEdge, 0, len(g.Edges))
@@ -80,8 +80,8 @@ func (g Graph) labeledEdges(keep map[string]bool) []LabeledEdge {
 	return out
 }
 
-// RelationEdges は関係（RA/CA/MA）を命題間の辺に畳んだもの。
-// 前提が複数ある RA は前提ごとに 1 本とする。命題グラフ（I-node と関係だけ）の辺になる。
+// RelationEdges folds relations (RA/CA/MA) into edges between propositions.
+// An RA with multiple premises yields one edge per premise. These are the edges of the proposition graph (I-nodes and relations only).
 func (g Graph) RelationEdges() []LabeledEdge {
 	var out []LabeledEdge
 	for _, r := range g.Relations() {
@@ -92,23 +92,23 @@ func (g Graph) RelationEdges() []LabeledEdge {
 	return out
 }
 
-// dialogueKeep は DialogueNodes / DialogueEdges（withTA=true）と
-// AnchorNodes / AnchorEdges（withTA=false）に残すノードの集合。
+// dialogueKeep is the set of nodes kept in DialogueNodes / DialogueEdges (withTA=true) and
+// AnchorNodes / AnchorEdges (withTA=false).
 //
-// 残すのは L / I（と withTA なら TA）と、**発話に anchor され命題を illocute する YA** だけ。
-// 落とすのは次の種類で、いずれも「LLM の質ではないもの」を GED から外すため。
+// It keeps L / I (and TA if withTA) and only **YAs anchored to an utterance that illocute a proposition**.
+// The following are dropped, each to exclude from GED "things that are not about LLM quality":
 //
-//	S-node（RA/CA/MA）  … 関係は辺 1 本に畳むので、ノードとしては数えない。
-//	                      ノードでも辺でも数えると同じ誤りを二重に罰する。
-//	遷移に anchor される YA … pred 側は「隣接しない発話同士の関係には TA が無いので
-//	                      YA も作らない」（annotate.go）という harness の構成規則で
-//	                      個数が決まっており、ゴールドとの差が LLM の誤りを表さない。
-//	                      発話行為の当たりは evaluation.ForceScore で別に測る。
-//	TA（withTA=false）    … 同じ理由で外す。pred 側の TA は「並べた発話の隣どうしに 1 本ずつ」
-//	                      という構成規則で決まるが、ゴールドの TA は分岐し、隣接しない発話も結ぶ。
-//	                      発話分割をゴールドどおりに与えた基準線でも、test 124 件で
-//	                      ゴールドの TA 1,732 個のうち 445 個、生成側 1,779 個のうち 492 個が対応せず、
-//	                      その TA と辺だけで 0.3 の全体 GED の分母の約 18% を占める（LLM がどう答えても消えない）。
+//	S-nodes (RA/CA/MA)      … relations are folded into one edge, so they are not counted as nodes.
+//	                          Counting them as both nodes and edges would penalize the same error twice.
+//	YAs anchored to TAs     … on the pred side their count is fixed by the harness construction rule
+//	                          "relations between non-adjacent utterances have no TA, so no YA is created"
+//	                          (annotate.go), so differences from the gold do not reflect LLM errors.
+//	                          Illocution accuracy is measured separately by evaluation.ForceScore.
+//	TA (withTA=false)       … dropped for the same reason. Pred-side TAs are fixed by the construction rule
+//	                          "one between each pair of adjacent utterances", while gold TAs branch and also link
+//	                          non-adjacent utterances. Even for the baseline given the gold segmentation, over 124 test items
+//	                          445 of 1,732 gold TAs and 492 of 1,779 generated TAs go unmatched, and those TAs and
+//	                          their edges alone make up about 18% of the 0.3 overall GED denominator (irreducible whatever the LLM answers).
 func (g Graph) dialogueKeep(withTA bool) map[string]bool {
 	keep := make(map[string]bool, len(g.Nodes))
 	for _, n := range g.Nodes {
@@ -137,33 +137,33 @@ func (g Graph) nodesIn(keep map[string]bool) []Node {
 	return out
 }
 
-// DialogueNodes は対話層（L / TA / I / 発話の YA）のノードを入力順で返す（GED 0.3 の全体グラフ）。
+// DialogueNodes returns the dialogue-layer nodes (L / TA / I / utterance YAs) in input order (the overall graph of GED 0.3).
 func (g Graph) DialogueNodes() []Node { return g.nodesIn(g.dialogueKeep(true)) }
 
-// DialogueEdges は対話層の辺に、関係を命題間の辺 1 本に畳んだもの（RelationEdges）を足したもの。
+// DialogueEdges is the dialogue-layer edges plus relations folded into single edges between propositions (RelationEdges).
 //
-// LabeledEdges との違いは、関係 1 本が「S-node 1 個 + 辺 2 本（+ YA 1 個 + 辺 2 本）」
-// ではなく「辺 1 本」になること。そのままでは種別の取り違え 1 件が
-// 命題単位では 0.75 なのに全体では 4.75 になる（辺が両側とも外れる）という
-// 粒度間の不整合が残る。畳んでおけば、関係の誤りのコストは粒度によらず同じ値になる。
+// The difference from LabeledEdges is that one relation becomes "one edge" rather than
+// "1 S-node + 2 edges (+ 1 YA + 2 edges)". Otherwise a granularity mismatch remains: one type
+// confusion costs 0.75 at the proposition level but 4.75 overall (the edges on both sides miss).
+// Folding makes the cost of a relation error the same regardless of granularity.
 func (g Graph) DialogueEdges() []LabeledEdge {
 	return append(g.labeledEdges(g.dialogueKeep(true)), g.RelationEdges()...)
 }
 
-// AnchorNodes は DialogueNodes から TA を除いたもの（L / I / 発話の YA。GED 0.4 の全体グラフ）。
+// AnchorNodes is DialogueNodes without TAs (L / I / utterance YAs; the overall graph of GED 0.4).
 func (g Graph) AnchorNodes() []Node { return g.nodesIn(g.dialogueKeep(false)) }
 
-// AnchorEdges は AnchorNodes どうしの辺（L→YA→I）に、関係を畳んだ辺を足したもの。
+// AnchorEdges is the edges among AnchorNodes (L→YA→I) plus the folded relation edges.
 func (g Graph) AnchorEdges() []LabeledEdge {
 	return append(g.labeledEdges(g.dialogueKeep(false)), g.RelationEdges()...)
 }
 
-// BaselineGraph は「LLM を使わない下限」の AIF グラフを作る。
+// BaselineGraph builds the "no LLM" lower-bound AIF graph.
 //
-// 与えられた発話をそのまま命題とみなし、すべて Asserting で anchor し、
-// 関係（RA/CA/MA）は一切張らない。正規化 GED は分母が大きいほど小さく出るため、
-// 「何もしない系」がどの程度の値を取るのかを示さないと、LLM の値が良いのか
-// 悪いのか判断できない。その基準線として使う。
+// It treats each given utterance as a proposition, anchors all of them with Asserting,
+// and adds no relations (RA/CA/MA). Normalized GED gets smaller as the denominator grows, so
+// without showing what value a "do nothing" system gets, we cannot tell whether the LLM's value
+// is good or bad. It serves as that baseline.
 func BaselineGraph(id string, locs []LocutionInput) Graph {
 	g := Graph{ID: id}
 	var prev string

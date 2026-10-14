@@ -36,7 +36,7 @@ func TestStoreGetAndRender(t *testing.T) {
 	}
 }
 
-// テンプレート変数の綴りを間違えたら、空文字で静かに壊れるのではなく失敗すること。
+// A misspelled template variable must fail rather than silently break with an empty string.
 func TestRenderFailsOnMissingField(t *testing.T) {
 	fsys := fstest.MapFS{"x_v1.md": &fstest.MapFile{Data: []byte("{{.Missing}}")}}
 	p, err := prompts.NewStoreFS(fsys).Get("x_v1")
@@ -57,8 +57,8 @@ func TestGetRejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// 実際に置いてあるプロンプトが全てテンプレートとして解釈できること。
-// プロンプトの書き間違いを実行時ではなくテストで見つける。
+// Every prompt actually in place must parse as a template.
+// This catches prompt typos in tests rather than at run time.
 func TestRepositoryPromptsParse(t *testing.T) {
 	files, _ := filepath.Glob("../../prompts/*.md")
 	if len(files) == 0 {

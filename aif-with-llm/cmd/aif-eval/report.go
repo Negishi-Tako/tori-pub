@@ -17,7 +17,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/stats"
 )
 
-// ---------- 集計 ----------
+// ---------- Aggregation ----------
 
 func report(outDir string) error {
 	b, err := os.ReadFile(filepath.Join(outDir, "results.jsonl"))
@@ -52,8 +52,8 @@ func report(outDir string) error {
 	return nil
 }
 
-// condKey は集計・検定で条件を識別する鍵。指標の版が違えば別系列として扱う
-// （同じグラフでも指標が違えば別の測り方なので、混ぜて平均してはいけない）。
+// condKey identifies a condition in aggregation and tests. Different metric versions are separate series
+// (even for the same graph, a different metric is a different measurement, so they must not be averaged together).
 func condKey(c *evaluation.AIFComparison) string {
 	return c.Condition + " · " + shortMetric(c.Metric)
 }
@@ -76,8 +76,8 @@ func csvRow(r Result) []string {
 	c := r.Comparison
 	f := func(v float64) string { return strconv.FormatFloat(v, 'f', 4, 64) }
 	return []string{
-		// 条件名は c.Condition（プロンプト版とモデルを含む形）を使う。
-		// r.Condition は生の条件名なので、CSV 単体では版を区別できない。
+		// Use c.Condition (which includes prompt version and model) as the condition name.
+		// r.Condition is the raw condition name, so the CSV alone could not distinguish versions.
 		r.NodesetID, c.Condition, r.PromptSet, r.Model, c.Metric, c.Weights,
 		f(c.FullGED.GED), f(c.FullGED.NormalizedGED), f(c.FullSimilarity), f(c.FullSimilarityGold),
 		f(c.ReducedGED.GED), f(c.ReducedGED.NormalizedGED), f(c.ReducedSimilarity), f(c.ReducedSimilarityGold),
@@ -113,7 +113,7 @@ func writeCSV(path string, results []Result) error {
 	return w.Error()
 }
 
-// agg は条件 × 重み ごとの平均。
+// agg holds averages per (condition × weight).
 type agg struct {
 	n                                        int
 	fullSim, reducedSim                      float64
@@ -123,7 +123,7 @@ type agg struct {
 	propRatio, propSim, propF1               float64
 	locRatio, locSim, locF1                  float64
 	typedF1, untypedF1, undirF1              float64
-	typedTP, untypedTP, undirTP              int // micro 平均（全ノードセットの TP をプール）用
+	typedTP, untypedTP, undirTP              int // for the micro average (TP pooled over all nodesets)
 	reversed, relPred, relGold, violations   int
 	forceAcc                                 float64
 	forceCompared, forceExact                int
@@ -160,8 +160,8 @@ func aggregate(results []Result) (map[string]*agg, []string) {
 		a.reducedSim += c.ReducedSimilarity
 		a.fullSimGold += c.FullSimilarityGold
 		a.reducedSimGold += c.ReducedSimilarityGold
-		// YA 一致率はノードセットごとの平均を主に使う（検定と定義を揃えるため）。
-		// プール値（forceExact / forceCompared）も併記する。
+		// The YA agreement rate mainly uses the per-nodeset average (to match the definition used in tests).
+		// The pooled value (forceExact / forceCompared) is reported alongside.
 		a.forceAccSum += c.Forces.Accuracy
 		for t, v := range c.Propositions.F1ByThreshold {
 			a.f1ByThreshold[t] += v
@@ -343,10 +343,10 @@ func writeSummary(path string, results []Result) error {
 	return writeFile(path, []byte(sb.String()))
 }
 
-// statMetrics は条件間で検定する指標。増やしすぎると多重比較補正で何も出なくなるので、
-// 「主張したいこと」に対応する 6 本に絞る。
-// GED は gold 基準の正規化を使う。対称正規化は分母が pred の大きさを含むので、
-// 「関係を多く出す」だけで値が上がり、条件間の検定に使うと改善を偽って検出する。
+// statMetrics are the metrics tested between conditions. Too many and multiple-comparison correction
+// leaves nothing significant, so they are limited to 6 that correspond to the claims we want to make.
+// GED uses gold-based normalization. Symmetric normalization includes pred's size in the denominator,
+// so merely emitting more relations raises the value, and testing on it would detect spurious improvements.
 var statMetrics = []struct {
 	name string
 	get  func(*evaluation.AIFComparison) float64
@@ -359,13 +359,13 @@ var statMetrics = []struct {
 	{"YA一致率", func(c *evaluation.AIFComparison) float64 { return c.Forces.Accuracy }},
 }
 
-// writeStats は条件間の対応のある比較（同じノードセット同士）を書き出す。
+// writeStats writes paired comparisons between conditions (on the same nodesets).
 //
-// 対応を取る単位はノードセット。片方の条件が失敗した組は比較から外す
-// （本 PJ の Run 比較と同じ扱い）。多重比較補正は 1 つの条件対について
-// 全指標をまたいで掛ける。
+// The pairing unit is the nodeset. Pairs where either condition failed are excluded from the
+// comparison (the same treatment as Run comparisons in the main project). Multiple-comparison
+// correction is applied per condition pair, across all metrics.
 func writeStats(path string, results []Result) error {
-	// 条件 -> ノードセット -> 指標値（重みは uniform のみ。対応付けは重みで変わらない）
+	// condition -> nodeset -> metric value (uniform weights only; matching does not depend on weights)
 	byCond := map[string]map[string]*evaluation.AIFComparison{}
 	var conds []string
 	for _, r := range results {
@@ -434,8 +434,8 @@ func writeStats(path string, results []Result) error {
 	return writeFile(path, []byte(sb.String()))
 }
 
-// writeEvidence は GED の数値を裏付ける具体例を書き出す。
-// レポートの定性分析はこのファイルから引く。
+// writeEvidence writes concrete examples backing the GED numbers.
+// The report's qualitative analysis draws from this file.
 func writeEvidence(path string, results []Result) error {
 	var sb strings.Builder
 	sb.WriteString("# 定性的な証拠\n\n")
@@ -483,7 +483,7 @@ func writeRels(sb *strings.Builder, title string, rels []evaluation.RelationEvid
 		if r.GoldType != "" && r.GoldType != r.Type {
 			label = r.Type + " → 正解 " + r.GoldType
 		}
-		// cos は生成側の src が正解側の何に対応付いたかの類似度。gold 側の行には無い。
+		// cos is the similarity of what the generated src was matched to on the gold side. Gold-side rows have none.
 		head := fmt.Sprintf("- **%s**（%s, src↔dst cos %.3f）", label, r.Side, r.PairSimilarity)
 		if r.Side == "pred" {
 			head = fmt.Sprintf("- **%s**（%s, src↔dst cos %.3f / src の対応 cos %.3f）",
@@ -500,7 +500,7 @@ func writeRels(sb *strings.Builder, title string, rels []evaluation.RelationEvid
 	sb.WriteString("\n")
 }
 
-// mergeCounts は混同行列 src を dst に足し込む。
+// mergeCounts adds the confusion matrix src into dst.
 func mergeCounts(dst, src map[string]map[string]int) {
 	for p, row := range src {
 		if dst[p] == nil {
@@ -512,7 +512,7 @@ func mergeCounts(dst, src map[string]map[string]int) {
 	}
 }
 
-// ratio は x / y を小数 3 桁で返す。y が 0 なら "-"。
+// ratio returns x / y to 3 decimal places, or "-" if y is 0.
 func ratio(x float64, y int) string {
 	if y == 0 {
 		return "-"
@@ -520,7 +520,7 @@ func ratio(x float64, y int) string {
 	return fmt.Sprintf("%.3f", x/float64(y))
 }
 
-// micro は全ノードセットをプールした TP・生成本数・正解本数から P/R/F1 を求める。
+// micro computes P/R/F1 from TP, generated count and gold count pooled over all nodesets.
 func micro(tp, pred, gold int) evaluation.PRF {
 	var p evaluation.PRF
 	if pred > 0 {

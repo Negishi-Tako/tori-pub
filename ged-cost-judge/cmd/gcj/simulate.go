@@ -24,7 +24,7 @@ func runSimulate(o simOptions) error {
 	cfg := simulate.Default()
 	cfg.Sources, cfg.Seed, cfg.Sigma = o.sources, o.seed, o.sigma
 	if o.null {
-		cfg.True = ged.Current() // 現行値が正しい世界（「維持」と判断できるかを見る）
+		cfg.True = ged.Current() // a world where the current values are correct (checks whether "keep" can be concluded)
 	}
 	trips, js, metas, err := simulate.Generate(cfg)
 	if err != nil {

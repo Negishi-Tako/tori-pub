@@ -17,7 +17,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/aif"
 )
 
-// ---------- 取得 ----------
+// ---------- Fetching ----------
 
 func fetch(ctx context.Context, logger *slog.Logger, corpus string, n int, dir string) error {
 	c := aif.NewClient(aif.ClientConfig{})
@@ -45,8 +45,8 @@ func fetch(ctx context.Context, logger *slog.Logger, corpus string, n int, dir s
 		"source":       aif.DefaultCorporaBaseURL,
 		"nodeset_urls": aif.DefaultNodesetBaseURL + "/json/<nodesetID>",
 	}
-	// files は取得した入力の指紋。AIFdb の状態は取得の時点で変わりうる（アーカイブが壊れている・
-	// 素テキストの形が変わる）ので、どの入力で実験したかを後から突き合わせられるようにする。
+	// files fingerprints the fetched inputs. AIFdb's state can change between fetches (broken archives,
+	// a changed raw-text format), so this lets us later match up which inputs an experiment used.
 	type fileEntry struct {
 		Subcorpus     string `json:"subcorpus"`
 		GraphSHA256   string `json:"graph_sha256"`
@@ -101,9 +101,9 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ---------- 読み込みと標本抽出 ----------
+// ---------- Loading and sampling ----------
 
-// loadDocs は取得済みのノードセットを ID 順に読み込む。
+// loadDocs loads the fetched nodesets in ID order.
 func loadDocs(dir string) ([]aif.Document, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -128,8 +128,8 @@ func loadDocs(dir string) ([]aif.Document, error) {
 	return out, nil
 }
 
-// sampleDocs は条件に合うノードセットを決定的に選ぶ。
-// 乱数種を固定するのは、同じ引数なら同じ標本になるようにするため（再現性）。
+// sampleDocs deterministically picks the nodesets that match the criteria.
+// The seed is fixed so that the same arguments give the same sample (reproducibility).
 func sampleDocs(docs []aif.Document, opts runOptions) []aif.Document {
 	var inSplit map[string]bool
 	if sub, found := splits[opts.Split]; found {
@@ -149,14 +149,14 @@ func sampleDocs(docs []aif.Document, opts runOptions) []aif.Document {
 			continue
 		}
 		if len(g.Relations()) == 0 {
-			continue // 関係が 1 本も無いノードセットは関係の評価に使えない
+			continue // a nodeset with no relations cannot be used to evaluate relations
 		}
-		// 素テキストの有無では選ばない。テキストを使うのは e2e 条件だけで、条件によって標本が
-		// 変わると条件間の対応のある比較が崩れるため。テキストの無いノードセットの e2e は
-		// build がエラーにし、結果に error 行として残る。
+		// Do not select on whether raw text exists. Only the e2e condition uses text, and if the sample
+		// varied by condition the paired comparison across conditions would break. e2e on a nodeset
+		// without text fails in build and is kept as an error row in the results.
 		ok = append(ok, d)
 	}
-	// 決定的な擬似乱数で並べ替えてから先頭を取る。
+	// Shuffle with a deterministic pseudo-random order, then take the head.
 	type keyed struct {
 		key float64
 		doc aif.Document
@@ -169,8 +169,8 @@ func sampleDocs(docs []aif.Document, opts runOptions) []aif.Document {
 		}
 		ks[i] = keyed{key: math.Abs(float64(h%1000003)) / 1000003.0, doc: d}
 	}
-	// 鍵が同じ（ハッシュの衝突）ときに順序が実行ごとに揺れないよう、ID で決着をつける。
-	// sort.Slice は安定でないので、衝突した 2 件が標本の境界にまたがると標本が変わりうる。
+	// Break ties on equal keys (hash collisions) by ID so the order does not vary between runs.
+	// sort.Slice is not stable, so two colliding entries straddling the sample boundary could change the sample.
 	sort.Slice(ks, func(i, j int) bool {
 		if ks[i].key != ks[j].key {
 			return ks[i].key < ks[j].key
@@ -188,7 +188,7 @@ func sampleDocs(docs []aif.Document, opts runOptions) []aif.Document {
 	return out
 }
 
-// writeJSON は v をインデント付き JSON で path に書き出す（親ディレクトリも作る）。
+// writeJSON writes v to path as indented JSON (creating parent directories).
 func writeJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", " ")
 	if err != nil {
@@ -197,7 +197,7 @@ func writeJSON(path string, v any) error {
 	return writeFile(path, b)
 }
 
-// writeFile は path に b を書き出す（親ディレクトリも作る）。
+// writeFile writes b to path (creating parent directories).
 func writeFile(path string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("aif-eval: %s の作成: %w", filepath.Dir(path), err)

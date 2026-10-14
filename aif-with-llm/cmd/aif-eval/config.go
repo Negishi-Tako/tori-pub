@@ -15,7 +15,7 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/prompts"
 )
 
-// config は環境変数（と .env）から読む設定。本実験が読むのはここにあるものだけ。
+// config holds the settings read from environment variables (and .env). This experiment reads only what is here.
 type config struct {
 	OpenAIAPIKey  string
 	OpenAIBaseURL string
@@ -32,7 +32,7 @@ type config struct {
 }
 
 func loadConfig() (*config, error) {
-	// .env が無くてもエラーにしない（環境変数で渡してもよい）。
+	// A missing .env is not an error (settings may come from environment variables).
 	_ = godotenv.Load()
 	c := &config{
 		OpenAIAPIKey:   env("OPENAI_API_KEY", ""),
@@ -94,8 +94,8 @@ func (c *config) openAI(timeout time.Duration, pricing *llm.PriceTable) llm.Open
 	}
 }
 
-// newLLMClient は「キャッシュ → レート制御・再試行 → OpenAI」の順に装飾した Client を返す。
-// キャッシュを最外に置くので、ヒットしたときはレート制御を待たない。
+// newLLMClient returns a Client decorated in the order "cache → rate control and retry → OpenAI".
+// The cache is outermost, so cache hits do not wait on rate control.
 func (c *config) newLLMClient() (llm.Client, error) {
 	pricing, err := llm.LoadPricing(c.PricingFile)
 	if err != nil {
@@ -112,10 +112,10 @@ func (c *config) newLLMClient() (llm.Client, error) {
 	return client, nil
 }
 
-// newEmbedder は OpenAI の埋め込みを返す。LLM_CACHE_DIR があればキャッシュする。
+// newEmbedder returns OpenAI embeddings, cached when LLM_CACHE_DIR is set.
 //
-// 埋め込みは同じ入力でも API の戻り値がビット単位で同一とは限らず、
-// Hungarian 法の割当がわずかに揺れて指標が再現しなくなるため、必ずキャッシュする。
+// The API does not always return bit-identical embeddings for the same input, which makes
+// the Hungarian assignment wobble slightly and the metrics irreproducible, so they are always cached.
 func (c *config) newEmbedder() (llm.Embedder, error) {
 	emb, err := llm.NewOpenAIEmbedder(llm.OpenAIEmbedderConfig{
 		OpenAIConfig: c.openAI(2*time.Minute, nil),

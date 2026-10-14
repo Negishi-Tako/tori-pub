@@ -12,61 +12,61 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/prompts"
 )
 
-// Annotator は書き起こしテキストから「素の AIF」グラフを作る LLM アノテータ。
+// Annotator is an LLM annotator that builds a "plain AIF" graph from transcript text.
 //
-// 段階は IAT のアノテーション手順そのままに 3 つに分ける:
+// It is split into 3 stages, following the IAT annotation procedure:
 //
-//	stage 1  書き起こし   → L-node（話者 + 発話単位）
-//	stage 2  L-node       → YA-node（発話行為） + I-node（命題内容）
-//	stage 3  I-node       → RA / CA / MA（+ 遷移に anchor される YA）
+//	stage 1  transcript  → L-nodes (speaker + utterance unit)
+//	stage 2  L-node      → YA-node (illocution) + I-node (propositional content)
+//	stage 3  I-node      → RA / CA / MA (+ YAs anchored to transitions)
 //
-// TA-node は隣り合う L-node の間に機械的に張る（IAT では発話の連なりそのものが
-// 遷移なので、LLM に判定させる対象ではない）。
+// TA-nodes are placed mechanically between adjacent L-nodes (in IAT the sequence of utterances
+// itself is the transition, so it is not something for the LLM to judge).
 type Annotator struct {
 	cfg    AnnotatorConfig
 	logger *slog.Logger
 }
 
-// AnnotatorConfig は Annotator の設定。
+// AnnotatorConfig configures an Annotator.
 type AnnotatorConfig struct {
 	Client  llm.Client
 	Prompts *prompts.Store
 	Model   string
-	// 各段階のプロンプト版。空なら既定（aif_*_v1）。
+	// Prompt version for each stage. Empty means the default (aif_*_v1).
 	LocutionPrompt   string
 	IllocutionPrompt string
 	RelationPrompt   string
-	// VerifyPrompt が空でなければ、stage 3 の後に検証パス（stage 4）を掛けて
-	// 生成した関係を 1 本ずつ残す / 捨てるを判定させる。
-	// 一括生成では「出しすぎ」を自分で抑えられないため、削る係を別に置く。
+	// If VerifyPrompt is non-empty, a verification pass (stage 4) runs after stage 3
+	// and decides, one relation at a time, whether to keep or discard each generated relation.
+	// Bulk generation cannot curb its own over-generation, so a separate pruner is used.
 	VerifyPrompt string
-	// ScoredRelations が true なら stage 3 を確信度つきスキーマで受ける
-	// （aif_relation_v5 以降）。閾値は後段（評価側）で動かす。
+	// If ScoredRelations is true, stage 3 is received with a confidence schema
+	// (aif_relation_v5 and later). The threshold is moved downstream (on the evaluation side).
 	ScoredRelations bool
-	// GradedRelations が true なら stage 3 を 5 段階の依存度つきスキーマで受ける
-	// （aif_relation_v7 以降）。3 値の確信度が実質 2 値に潰れたため刻みを増やした版。
+	// If GradedRelations is true, stage 3 is received with a 5-level dependence schema
+	// (aif_relation_v7 and later). Finer levels were added because 3-level confidence collapsed to effectively binary.
 	GradedRelations bool
-	// CandidatePrompt が空でなければ、stage 3 を「関係のリストを生成させる」のではなく
-	// 「候補対を 1 つずつ判定させる」方式で行う。
+	// If CandidatePrompt is non-empty, stage 3 judges candidate pairs one at a time
+	// instead of having the LLM generate a list of relations.
 	//
-	// 生成方式では、どの対を選ぶかの判断が「隣接する命題を全部つなぐ」という
-	// 自明な規則に負けていた（test n=124 の無向 F1: 0.458 対 0.508）。選択を自由生成に任せず、
-	// 候補集合をこちらで決めて、判定だけを LLM にやらせる。
+	// With generation, the choice of which pairs to link lost to the trivial rule
+	// "link all adjacent propositions" (test n=124 undirected F1: 0.458 vs 0.508). Rather than leave
+	// selection to free generation, we fix the candidate set ourselves and let the LLM only judge.
 	CandidatePrompt string
-	// CandidateMaxDistance は候補に含める命題ランクの最大距離。
-	// dev の実測では k=4 で正解の 90.5% を覆い、1 ノードセットあたり 46 対、
-	// そのうち 17.6% が実際に関係を持つ。0 なら既定の 4。
+	// CandidateMaxDistance is the maximum proposition-rank distance included in candidates.
+	// Measured on dev, k=4 covers 90.5% of gold relations with 46 pairs per nodeset,
+	// of which 17.6% actually hold a relation. 0 means the default of 4.
 	CandidateMaxDistance int
-	// AdjacentRelations が true なら stage 3 を LLM ではなく
-	// 「隣接する命題を全部つなぐ」機械的な規則で作る（基準線）。
-	// 関係抽出にも「LLM 無しの下限」を必ず 1 本置く。
+	// If AdjacentRelations is true, stage 3 is built by the mechanical rule
+	// "link all adjacent propositions" instead of the LLM (baseline).
+	// Relation extraction must always have one "no LLM" lower bound too.
 	AdjacentRelations bool
-	// RestrictLocutionForces が true なら、stage 2 の選択肢を L-node に anchor
-	// できる発話行為（aif.LocutionForces）だけに絞る。IAT の運用に沿うのはこちらで、
-	// 既定は true。false にすると全 11 種から選ばせる（v1 相当・比較用）。
+	// If RestrictLocutionForces is true, stage 2's choices are limited to illocutionary forces
+	// that can be anchored to an L-node (aif.LocutionForces). This matches IAT practice,
+	// and the default is true. If false, all 11 forces are offered (v1-equivalent, for comparison).
 	RestrictLocutionForces *bool
-	// MaxLocutions を超える入力は分析を拒否する。1 回のプロンプトに載せきれない
-	// 量を黙って切り詰めると、評価対象のグラフが静かに壊れるため。
+	// Inputs exceeding MaxLocutions are refused. Silently truncating more than fits
+	// in one prompt would quietly corrupt the graph under evaluation.
 	MaxLocutions int
 	Logger       *slog.Logger
 }
@@ -76,11 +76,11 @@ const (
 	defaultIllocutionPrompt = "aif_illocution_v2"
 	defaultRelationPrompt   = "aif_relation_v2"
 	defaultMaxLocutions     = 120
-	// 候補に含める命題ランクの最大距離。dev で正解の 90.5% を覆う。
+	// Maximum proposition-rank distance included in candidates. Covers 90.5% of gold on dev.
 	defaultCandidateMaxDistance = 4
 )
 
-// NewAnnotator はアノテータを作る。
+// NewAnnotator creates an annotator.
 func NewAnnotator(cfg AnnotatorConfig) (*Annotator, error) {
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("aif: llm client is nil")
@@ -117,9 +117,9 @@ func NewAnnotator(cfg AnnotatorConfig) (*Annotator, error) {
 	return &Annotator{cfg: cfg, logger: lg}, nil
 }
 
-// PromptVersions は使用するプロンプトの版と本文ハッシュを返す。
+// PromptVersions returns the prompt versions in use and their body hashes.
 //
-// 抽出結果の再現性のため、どの版で作ったグラフなのかを結果に残せるようにする
+// For reproducibility of extraction results, this lets results record which version produced a graph.
 func (a *Annotator) PromptVersions() (map[string]string, error) {
 	out := map[string]string{}
 	for stage, name := range map[string]string{
@@ -145,31 +145,31 @@ func (a *Annotator) PromptVersions() (map[string]string, error) {
 	return out, nil
 }
 
-// LocutionInput は stage 2 以降に渡す発話単位。
-// ゴールドの L-node をそのまま渡す条件（分割を与える条件）でも使う。
+// LocutionInput is the utterance unit passed to stage 2 onward.
+// Also used by conditions that pass the gold L-nodes as-is (conditions that give the segmentation).
 type LocutionInput struct {
 	Speaker string
 	Text    string
 }
 
-// Annotation は 1 ノードセット分のアノテーション結果。
+// Annotation is the annotation result for one nodeset.
 type Annotation struct {
 	Graph Graph `json:"graph"`
-	// Raw は各段階の LLM 生レスポンス。評価指標を後から変えても再生成が要らない
-	// ようにするため捨てない。
+	// Raw holds the raw LLM response of each stage. It is kept so that changing evaluation
+	// metrics later does not require regeneration.
 	Raw map[string]json.RawMessage `json:"raw,omitempty"`
-	// Usage は 3 段階の合計トークン・コスト。
+	// Usage is the total tokens and cost over the 3 stages.
 	Usage llm.Usage `json:"usage"`
-	// Violations は生成したグラフの AIF メタモデル違反（0 件が正常）。
+	// Violations are AIF metamodel violations in the generated graph (0 is normal).
 	Violations []Violation `json:"violations,omitempty"`
-	// Rationales は relation ごとの根拠。定性分析で使う。
+	// Rationales are the per-relation rationales. Used in qualitative analysis.
 	Rationales map[string]string `json:"rationales,omitempty"`
-	// Dropped は検証パス（stage 4）が捨てた関係の本数。0 は「捨てなかった」か
-	// 「検証パスを掛けていない」のどちらでもありうる（Raw["verify"] の有無で分かる）。
+	// Dropped is the number of relations discarded by the verification pass (stage 4). 0 can mean either
+	// "nothing was discarded" or "no verification pass was run" (tell by whether Raw["verify"] exists).
 	Dropped int `json:"dropped,omitempty"`
 }
 
-// Segment は stage 1。書き起こしを L-node に切る。
+// Segment is stage 1. It cuts the transcript into L-nodes.
 func (a *Annotator) Segment(ctx context.Context, id, transcript string) ([]LocutionInput, json.RawMessage, llm.Usage, error) {
 	data := map[string]any{"Transcript": strings.TrimSpace(transcript)}
 	out, resp, err := call[LocutionResult](ctx, a, "locution", a.cfg.LocutionPrompt, data,
@@ -191,8 +191,8 @@ func (a *Annotator) Segment(ctx context.Context, id, transcript string) ([]Locut
 	return locs, rawOf(resp), usageOf(resp), nil
 }
 
-// Annotate は与えられた L-node 列に stage 2・3 を掛けて AIF グラフを組み立てる。
-// 書き起こしから始める場合は Segment を先に呼ぶ（AnnotateTranscript が両方やる）。
+// Annotate applies stages 2 and 3 to the given L-nodes and assembles an AIF graph.
+// To start from a transcript, call Segment first (AnnotateTranscript does both).
 func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInput) (*Annotation, error) {
 	if len(locs) == 0 {
 		return nil, fmt.Errorf("aif: %s: 発話単位が空", id)
@@ -203,7 +203,7 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 	}
 	ann := &Annotation{Raw: map[string]json.RawMessage{}, Rationales: map[string]string{}}
 
-	// ---- stage 2: 発話行為と命題内容 ----
+	// ---- stage 2: illocutions and propositional content ----
 	type promptLoc struct {
 		Index   int
 		Speaker string
@@ -242,15 +242,15 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 	ann.Raw["illocution"] = rawOf(resp)
 	ann.Usage = ann.Usage.Add(usageOf(resp))
 
-	// ---- グラフの組み立て（L / TA / YA / I） ----
+	// ---- Assemble the graph (L / TA / YA / I) ----
 	g := Graph{ID: id}
 	locID := make([]string, len(locs))
 	for i, l := range locs {
 		locID[i] = fmt.Sprintf("L%d", i)
 		g.Nodes = append(g.Nodes, Node{ID: locID[i], Type: TypeL, Text: l.Speaker + " : " + l.Text, Speaker: l.Speaker})
 	}
-	// TA は隣接する L の間に張る。IAT では発話の連続そのものが遷移であり、
-	// ここを LLM に決めさせると評価が「遷移を当てる課題」に化けてしまう。
+	// TAs are placed between adjacent Ls. In IAT the sequence of utterances itself is the transition;
+	// letting the LLM decide this would turn the evaluation into a "guess the transitions" task.
 	taBetween := map[[2]int]string{}
 	for i := 0; i+1 < len(locs); i++ {
 		ta := fmt.Sprintf("TA%d", i)
@@ -259,8 +259,8 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 		taBetween[[2]int{i, i + 1}] = ta
 	}
 
-	propID := make([]string, len(locs))   // locution index -> I-node ID（無ければ空）
-	propBody := make([]string, len(locs)) // locution index -> 命題の本文
+	propID := make([]string, len(locs))   // locution index -> I-node ID (empty if none)
+	propBody := make([]string, len(locs)) // locution index -> proposition text
 	seen := map[int]bool{}
 	for _, it := range items {
 		if it.Index < 0 || it.Index >= len(locs) {
@@ -278,8 +278,8 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 			force = SchemeDefaultIllocuting
 		}
 		if prop == "" {
-			// 命題内容が無い発話（議事進行など）には I-node も YA も作らない。
-			// AIF では「内容の無い YA」は許されないため。
+			// Utterances without propositional content (procedural remarks, etc.) get neither an I-node nor a YA,
+			// because AIF does not allow "a YA without content".
 			continue
 		}
 		iid := fmt.Sprintf("I%d", it.Index)
@@ -293,9 +293,9 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 		g.Edges = append(g.Edges, Edge{FromID: locID[it.Index], ToID: yid}, Edge{FromID: yid, ToID: iid})
 	}
 
-	// ---- stage 3: 命題間の関係 ----
-	// Force は stage 2 が付けた発話行為。stage 3 のプロンプト（v3 以降）が
-	// 質問と応答の関係（IAT では MA）を判定するのに使う。
+	// ---- stage 3: relations between propositions ----
+	// Force is the illocution assigned by stage 2. The stage 3 prompt (v3 and later) uses it
+	// to judge question–answer relations (MA in IAT).
 	type promptProp struct {
 		Index   int
 		Speaker string
@@ -309,8 +309,8 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 			forceOf[it.Index] = it.Force
 		}
 	}
-	propIdxOf := map[int]int{}   // プロンプト上の番号 -> locution index
-	propText := map[int]string{} // プロンプト上の番号 -> 命題の本文（stage 4 で使う）
+	propIdxOf := map[int]int{}   // number in the prompt -> locution index
+	propText := map[int]string{} // number in the prompt -> proposition text (used in stage 4)
 	for i, pid := range propID {
 		if pid == "" {
 			continue
@@ -321,13 +321,13 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 		propText[n] = propBody[i]
 	}
 	if len(props) >= 2 {
-		// どの方式でも、この先は []RelationItemScored の形に揃えて扱う。
+		// Whatever the method, from here on everything is handled as []RelationItemScored.
 		var rels []RelationItemScored
 		var resp2 *llm.Response
 		switch {
 		case a.cfg.AdjacentRelations:
-			// 基準線: 隣り合う命題を全部つなぐ。LLM を使わない。
-			// 種別は最頻の RA、向きは「後の命題 → 前の命題」（dev の実測で 73%）。
+			// Baseline: link all adjacent propositions. No LLM.
+			// The type is the most frequent one, RA; the direction is "later proposition → earlier proposition" (73% measured on dev).
 			for i := 0; i+1 < len(props); i++ {
 				rels = append(rels, RelationItemScored{
 					Src: i + 1, Dst: i, Type: string(TypeRA),
@@ -383,9 +383,9 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 			ann.Usage = ann.Usage.Add(usageOf(resp2))
 		}
 
-		// ---- stage 4: 検証パス（任意） ----
-		// 候補を 1 本ずつ見直させて捨てるものを決める。落とした件数は記録する
-		// （何本削ったか分からないと、効いたのかどうか判断できない）。
+		// ---- stage 4: verification pass (optional) ----
+		// Have each candidate reviewed one at a time to decide what to discard. The number dropped is recorded
+		// (without knowing how many were pruned, we cannot tell whether it helped).
 		if a.cfg.VerifyPrompt != "" && len(rels) > 0 {
 			kept, resp3, err := a.verify(ctx, id, props, propText, rels)
 			if err != nil {
@@ -423,9 +423,9 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 			g.Edges = append(g.Edges, Edge{FromID: propID[si], ToID: sid}, Edge{FromID: sid, ToID: propID[di]})
 			ann.Rationales[sid] = strings.TrimSpace(r.Rationale)
 
-			// 関係を担う YA は、両端の発話の間の TA に anchor する（IAT）。
-			// 隣接していない発話同士の関係には TA が無いので YA も作らない。
-			// 関係を担う YA は遷移に anchor されるので、発話単位の力（Asserting 等）は取らない。
+			// A YA carrying a relation is anchored to the TA between the two utterances (IAT).
+			// Relations between non-adjacent utterances have no TA, so no YA is created either.
+			// YAs carrying relations are anchored to transitions, so they do not take per-utterance forces (Asserting, etc.).
 			force := strings.TrimSpace(r.Force)
 			if !slices.Contains(TransitionForces, force) {
 				force = SchemeDefaultIllocuting
@@ -451,7 +451,7 @@ func (a *Annotator) Annotate(ctx context.Context, id string, locs []LocutionInpu
 	return ann, nil
 }
 
-// AnnotateTranscript は書き起こしから 3 段階すべてを実行する（end-to-end 条件）。
+// AnnotateTranscript runs all 3 stages starting from a transcript (the end-to-end condition).
 func (a *Annotator) AnnotateTranscript(ctx context.Context, id, transcript string) (*Annotation, error) {
 	locs, raw, usage, err := a.Segment(ctx, id, transcript)
 	if err != nil {
@@ -466,8 +466,8 @@ func (a *Annotator) AnnotateTranscript(ctx context.Context, id, transcript strin
 	return ann, nil
 }
 
-// call は 1 段階の LLM 呼び出し。プロンプトを読み、テンプレートを展開し、
-// Structured Outputs で受け取る。
+// call is a single-stage LLM call. It reads the prompt, expands the template, and
+// receives the result via Structured Outputs.
 func call[T any](ctx context.Context, a *Annotator, stage, promptName string, data any, schemaName, schemaDesc string) (T, *llm.Response, error) {
 	var zero T
 	p, err := a.cfg.Prompts.Get(promptName)
@@ -507,11 +507,11 @@ func usageOf(resp *llm.Response) llm.Usage {
 	return resp.Usage
 }
 
-// verify は stage 4。生成した関係を 1 本ずつ見直して、残すものだけを返す。
+// verify is stage 4. It reviews generated relations one at a time and returns only those to keep.
 //
-// 別の呼び出しにするのが要点。同じ呼び出しの中で「出して、かつ絞る」ことは
-// 一括生成では成立しておらず（実測で過剰生成が当たりの本数を上回る）、
-// 出す係と削る係を分けたときに何が起きるかを測るための段階。
+// The key point is making it a separate call. "Proposing and pruning" within the same call
+// does not work in bulk generation (measured over-generation exceeds the number of hits);
+// this stage measures what happens when proposing and pruning are split.
 func (a *Annotator) verify(ctx context.Context, id string, props any, propText map[int]string, rels []RelationItemScored) ([]RelationItemScored, *llm.Response, error) {
 	type promptRel struct {
 		Index          int
@@ -522,7 +522,7 @@ func (a *Annotator) verify(ctx context.Context, id string, props any, propText m
 		DstText        string
 		DialogueOffset int
 	}
-	// プロンプトに渡す候補。src / dst の本文も添える（番号だけでは判断できない）。
+	// Candidates passed to the prompt, with the src / dst text attached (numbers alone are not enough to judge).
 	cand := make([]promptRel, 0, len(rels))
 	for i, r := range rels {
 		d := r.Src - r.Dst
@@ -559,13 +559,13 @@ func (a *Annotator) verify(ctx context.Context, id string, props any, propText m
 	return kept, resp, nil
 }
 
-// classifyCandidates は候補対を 1 つずつ判定させる方式の stage 3。
+// classifyCandidates is the stage 3 variant that judges candidate pairs one at a time.
 //
-// 候補は「命題ランクの距離が CandidateMaxDistance 以内の対」。
-// dev の実測では k=4 で正解の 90.5% を覆い、1 ノードセットあたり 46 対、
-// そのうち 17.6% が実際に関係を持つ。
-// 生成方式と違って、どの対を見るかは LLM に任せない。見落としの上限が
-// 候補集合で決まる代わりに、「関係があるのに気づかない」以外の失敗が消える。
+// Candidates are "pairs whose proposition-rank distance is within CandidateMaxDistance".
+// Measured on dev, k=4 covers 90.5% of gold relations with 46 pairs per nodeset,
+// of which 17.6% actually hold a relation.
+// Unlike generation, which pairs to look at is not left to the LLM. The candidate set caps
+// what can be found, but in exchange every failure other than "missing an existing relation" disappears.
 func (a *Annotator) classifyCandidates(ctx context.Context, id string, props any, propText map[int]string) ([]RelationItemScored, *llm.Response, error) {
 	n := len(propText)
 	type promptCand struct {
@@ -606,7 +606,7 @@ func (a *Annotator) classifyCandidates(ctx context.Context, id string, props any
 		seen[it.Candidate] = true
 		t := NodeType(strings.TrimSpace(it.Relation))
 		if !t.IsSNode() {
-			continue // "none" もここに落ちる
+			continue // "none" also lands here
 		}
 		c := cands[it.Candidate]
 		src, dst := c.A, c.B

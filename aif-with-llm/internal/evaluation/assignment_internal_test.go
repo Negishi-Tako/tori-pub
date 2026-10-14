@@ -8,8 +8,8 @@ import (
 	"github.com/negishi-tako/tori-pub/aif-with-llm/internal/aif"
 )
 
-// 小さな行列で総当たりと突き合わせ、最適値を返すこと。
-// 同点の多い整数行列（構造ノードどうしが置換コスト 0 になる状況）も含める。
+// On small matrices, the result must match brute force and return the optimum.
+// Integer matrices with many ties (where structural nodes have substitution cost 0) are included.
 func TestLinearSumAssignmentIsOptimal(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	for trial := range 300 {
@@ -19,7 +19,7 @@ func TestLinearSumAssignmentIsOptimal(t *testing.T) {
 			cost[i] = make([]float64, n)
 			for j := range cost[i] {
 				if trial%2 == 0 {
-					cost[i][j] = float64(rng.IntN(3)) // 同点だらけ
+					cost[i][j] = float64(rng.IntN(3)) // full of ties
 				} else {
 					cost[i][j] = rng.Float64()
 				}
@@ -38,7 +38,7 @@ func TestLinearSumAssignmentIsOptimal(t *testing.T) {
 	}
 }
 
-// 定数行列では単位置換を返す（scipy と同じ同点の解き方）。
+// A constant matrix returns the identity permutation (the same tie-breaking as scipy).
 func TestLinearSumAssignmentTieBreakMatchesScipy(t *testing.T) {
 	cost := [][]float64{{0, 0, 0}, {0, 0, 0}, {0, 0, 0}}
 	got, err := linearSumAssignment(cost)
@@ -53,7 +53,7 @@ func TestLinearSumAssignmentTieBreakMatchesScipy(t *testing.T) {
 }
 
 func TestBipartiteMatchPrefersSubstitutionOnlyWhenCheaper(t *testing.T) {
-	// 0 → 0 は置換 0.2 が削除 + 挿入 2.0 より安い。1 は置換先が無いので削除。
+	// For 0 → 0, substitution at 0.2 is cheaper than deletion + insertion at 2.0. 1 has no substitution target, so it is deleted.
 	m, err := bipartiteMatch([][]float64{{0.2}, {1e6}}, []float64{1, 1}, []float64{1})
 	if err != nil {
 		t.Fatal(err)
@@ -108,11 +108,11 @@ func bruteForce(cost [][]float64) float64 {
 	return best
 }
 
-// 閾値ごとの命題 F1 は「閾値以上の対だけで作れる 1 対 1 の対応の最大数」で数えること。
-// cos の総和を最大にする割当 (0.99, 0.50) を閾値で切ると 1 組だが、(0.56, 0.56) なら 2 組作れる。
+// Per-threshold proposition F1 must count "the maximum number of one-to-one pairs formable from pairs at or above the threshold".
+// Cutting the cos-sum-maximizing assignment (0.99, 0.50) at the threshold gives 1 pair, but (0.56, 0.56) gives 2.
 func TestAlignmentCountsMaximumPairsAboveThreshold(t *testing.T) {
 	sim := simTable{{"p0", "g0"}: 0.99, {"p1", "g1"}: 0.50, {"p0", "g1"}: 0.56, {"p1", "g0"}: 0.56}
-	hungarian := map[string]string{"p0": "g0", "p1": "g1"} // 総和最大の割当
+	hungarian := map[string]string{"p0": "g0", "p1": "g1"} // the sum-maximizing assignment
 	a, err := alignmentOf(hungarian, sim, []string{"p0", "p1"}, []string{"g0", "g1"}, 0.55)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestAlignmentCountsMaximumPairsAboveThreshold(t *testing.T) {
 	}
 }
 
-// 発話行為は発話（L-node）に anchor された YA だけで比べること。ゴールドの TA→YA→I を混ぜない。
+// Illocutions must be compared only on YAs anchored to utterances (L-nodes). Gold TA→YA→I must not be mixed in.
 func TestForceScoreIgnoresTransitionAnchoredYA(t *testing.T) {
 	mk := func(withTA bool) aif.Graph {
 		g := aif.Graph{ID: "f", Nodes: []aif.Node{

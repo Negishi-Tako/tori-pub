@@ -1,7 +1,7 @@
-// Package prompts は prompts/ 配下のプロンプトファイルを読み込む。
+// Package prompts loads prompt files under prompts/.
 //
-// 規約: プロンプトをコードに文字列リテラルで書かない。
-// 抽出結果の再現性のため、読み込んだ本文の SHA-256 を結果に残す。
+// Convention: never write prompts in code as string literals.
+// For reproducibility of extraction results, the SHA-256 of the loaded body is recorded in the results.
 package prompts
 
 import (
@@ -15,20 +15,20 @@ import (
 	"text/template"
 )
 
-// Prompt は 1 つのプロンプト。
+// Prompt is a single prompt.
 type Prompt struct {
-	// Version はファイル名から拡張子を除いたもの（例 "aif_relation_v3"）。
+	// Version is the file name without its extension (e.g. "aif_relation_v3").
 	Version string
-	// Body は本文（テンプレート展開前）。
+	// Body is the body text (before template expansion).
 	Body string
-	// SHA256 は本文のハッシュ。同名ファイルを書き換えた事故を検知する。
+	// SHA256 is the hash of the body. It detects accidental rewrites of a file with the same name.
 	SHA256 string
 
 	tmpl *template.Template
 }
 
-// Render はテンプレート変数を埋めて最終的なプロンプト文字列を返す。
-// 未定義の変数を参照した場合はエラーにする（空文字で静かに壊れるのを防ぐ）。
+// Render fills in the template variables and returns the final prompt string.
+// Referencing an undefined variable is an error (to avoid silently breaking with an empty string).
 func (p Prompt) Render(data any) (string, error) {
 	if p.tmpl == nil {
 		return p.Body, nil
@@ -40,25 +40,25 @@ func (p Prompt) Render(data any) (string, error) {
 	return sb.String(), nil
 }
 
-// Store はプロンプトの読み込み元。テストでは fstest.MapFS を渡せる。
+// Store is where prompts are loaded from. Tests can pass an fstest.MapFS.
 type Store struct {
 	fsys fs.FS
 	mu   sync.Mutex
-	// cache は同じプロンプトを何度も読み直さないため。
+	// cache avoids re-reading the same prompt many times.
 	cache map[string]Prompt
 }
 
-// NewStore はディレクトリからプロンプトを読む Store を作る。
+// NewStore creates a Store that reads prompts from a directory.
 func NewStore(dir string) *Store {
 	return &Store{fsys: os.DirFS(dir), cache: map[string]Prompt{}}
 }
 
-// NewStoreFS は任意の fs.FS から読む Store を作る。
+// NewStoreFS creates a Store that reads from any fs.FS.
 func NewStoreFS(fsys fs.FS) *Store {
 	return &Store{fsys: fsys, cache: map[string]Prompt{}}
 }
 
-// Get は version（拡張子なしのファイル名、例 "aif_relation_v3"）でプロンプトを読む。
+// Get loads a prompt by version (the file name without extension, e.g. "aif_relation_v3").
 func (s *Store) Get(version string) (Prompt, error) {
 	if version == "" {
 		return Prompt{}, fmt.Errorf("prompts: version is empty")
